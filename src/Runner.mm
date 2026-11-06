@@ -134,14 +134,14 @@ static void RunSuite(int fd,NSString *name) {@autoreleasepool{
 #endif
     if(logTool)system=Spawn(SelfPath(),@[@"--log-worker"]);
     log.put(@"system_log_collector",@{@"started":@(system.pid>0),@"reason":system.pid>0?@"bounded process-filtered stream":@"log utility unavailable; native output and ASL fallback will still be recorded"},true);
-    NSArray *profiles=@[@"inventory",@"displays",@"receiver",@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"root-simulator-entitlement-key",@"root-simulator-baseline-after-key",@"displays",@"system-log-fallback",@"inventory"];
+    NSArray *profiles=@[@"inventory",@"displays",@"receiver",@"root-simulator-key",@"root-simulator-entitlement-key",@"root-simulator-entitlement-no-key",@"root-simulator-baseline-after-key",@"displays",@"system-log-fallback",@"inventory"];
 #if CD_HOST_TEST
     profiles=@[@"host-fixture",@"host-fixture-2"];
 #endif
     NSUInteger completed=0;BOOL failed=NO;
     for(NSString *profile in profiles){
         if(cancelled||CDClock()-started>180){log.put(@"remaining_stages_withheld",@{@"reason":cancelled?@"cancelled":@"suite deadline"},true);break;}
-        BOOL entitlementTrial=[profile isEqual:@"root-simulator-entitlement-key"];
+        BOOL entitlementTrial=[profile hasPrefix:@"root-simulator-entitlement-"];
         NSString *program=entitlementTrial?@"/var/jb/usr/libexec/cardash-diagnostics-session-request":SelfPath();
         if(entitlementTrial)log.put(@"entitlement_comparison",@{@"profile":profile,@"program":program,@"hypothesis_only":@YES,@"additional_entitlement":@"com.apple.private.carkit.sessionRequest",@"baseline_repeated_afterward":@YES},true);
         Child child=Spawn(program,@[@"--worker",profile]);

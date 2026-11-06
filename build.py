@@ -19,11 +19,13 @@ def prepare():
 def flags(shared):return ['-x','objective-c++','-std=c++17','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations','-I',ROOT/'src','-I',shared]
 def host():
     shared=prepare();out=ROOT/'build/host';out.mkdir(exist_ok=True)
-    run(['xcrun','clang++',*flags(shared),'-DCD_HOST_TEST=1','src/Common.m','src/Runner.mm','src/Worker.mm','src/XPCTrace.mm','src/NativeIdentity.mm','src/main.mm','-framework','Foundation','-o',out/'cardash-diagnostics'])
+    run(['xcrun','clang++',*flags(shared),'-DCD_HOST_TEST=1','src/Common.m','src/Runner.mm','src/Worker.mm','src/XPCTrace.mm','src/NativeIdentity.mm','src/HostPayload.mm','src/main.mm','-framework','Foundation','-o',out/'cardash-diagnostics'])
     run(['xcrun','clang++',*flags(shared),'tests/GatesTests.m','src/Common.m','-framework','Foundation','-o',out/'gate-tests'])
     run([out/'gate-tests'])
     run(['xcrun','clang++',*flags(shared),'tests/NativeIdentityTests.mm','src/NativeIdentity.mm','-framework','Foundation','-o',out/'identity-tests'])
     run([out/'identity-tests'])
+    run(['xcrun','clang++',*flags(shared),'tests/HostPayloadTests.mm','src/HostPayload.mm','-framework','Foundation','-o',out/'host-payload-tests'])
+    run([out/'host-payload-tests'])
     return out
 def icon(path,size):
     # Original geometric diagnostic icon, not an Apple/CarPlay asset.
@@ -45,7 +47,7 @@ def app(shared,out,sdk,sim=False):
     else:base+=['-arch','arm64','-miphoneos-version-min=16.6']
     sdkpath=run(['xcrun','--sdk',sdk,'--show-sdk-path'])
     run([*base,'-isysroot',sdkpath,'app/main.mm','src/Common.m','-framework','Foundation','-framework','UIKit','-o',bundle/'CarDashDiagnostics'])
-    plist(bundle/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.diagnostics.app','CFBundleExecutable':'CarDashDiagnostics','CFBundleName':'CarPlay Diagnostics','CFBundleDisplayName':'CarPlay Diagnostics','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'3','CFBundleShortVersionString':'0.1.2','MinimumOSVersion':'16.6','CFBundleSupportedPlatforms':['iPhoneSimulator' if sim else 'iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
+    plist(bundle/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.diagnostics.app','CFBundleExecutable':'CarDashDiagnostics','CFBundleName':'CarPlay Diagnostics','CFBundleDisplayName':'CarPlay Diagnostics','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'4','CFBundleShortVersionString':'0.1.3','MinimumOSVersion':'16.6','CFBundleSupportedPlatforms':['iPhoneSimulator' if sim else 'iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
     icon(bundle/'AppIcon@2x.png',120);icon(bundle/'AppIcon@3x.png',180)
     # The device client needs IPC outside an application container. The simulator
     # intentionally keeps its own container for the synthetic Run/Share tests.
@@ -55,7 +57,7 @@ def native():
     shared=prepare();out=ROOT/'build/device';out.mkdir(exist_ok=True)
     sdk=run(['xcrun','--sdk','iphoneos','--show-sdk-path'])
     binary=out/'cardash-diagnostics'
-    run(['xcrun','--sdk','iphoneos','clang++',*flags(shared),'-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.6','src/Common.m','src/Runner.mm','src/Worker.mm','src/XPCTrace.mm','src/NativeIdentity.mm','src/main.mm','-framework','Foundation','-o',binary])
+    run(['xcrun','--sdk','iphoneos','clang++',*flags(shared),'-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.6','src/Common.m','src/Runner.mm','src/Worker.mm','src/XPCTrace.mm','src/NativeIdentity.mm','src/HostPayload.mm','src/main.mm','-framework','Foundation','-o',binary])
     comparison=out/'cardash-diagnostics-session-request';shutil.copy2(binary,comparison)
     ent=out/'helper-entitlements.plist';plist(ent,{'platform-application':True,'com.apple.private.security.no-sandbox':True})
     run(['/usr/bin/codesign','--force','--sign','-','--entitlements',ent,binary]);run(['/usr/bin/codesign','--verify','--strict',binary]);bundle=app(shared,out,'iphoneos')
@@ -73,7 +75,7 @@ def native():
     plist(stage/'var/jb/Library/LaunchDaemons/com.cfluid.cardash.diagnostics.plist',job)
     readme=ROOT/'README.md'
     if readme.exists():shutil.copy2(readme,stage/'var/jb/usr/share/cardash-diagnostics/README.txt')
-    manifest={'version':'0.1.2','target':'iPhone10,2 / 20G75 / Dopamine rootless','device_tested':False,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'sha256':{}}
+    manifest={'version':'0.1.3','target':'iPhone10,2 / 20G75 / Dopamine rootless','device_tested':False,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'sha256':{}}
     for path in sorted((stage/'var/jb').rglob('*')):
         if path.is_file():manifest['sha256'][str(path.relative_to(stage))]=hashlib.sha256(path.read_bytes()).hexdigest()
     (stage/'var/jb/usr/share/cardash-diagnostics/manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
@@ -94,7 +96,7 @@ def native():
     for name,data in [('debian-binary',b'2.0\n'),('control.tar.xz',tar_bytes(stage/'DEBIAN')),('data.tar.xz',tar_bytes(stage))]:
         header=f'{name:<16}{1793923200:<12}{0:<6}{0:<6}{"100644":<8}{len(data):<10}`\n'.encode('ascii');assert len(header)==60
         payload+=header+data+(b'\n' if len(data)%2 else b'')
-    dist=ROOT/'dist';dist.mkdir(exist_ok=True);deb=dist/'com.cfluid.cardash.diagnostics_0.1.2_iphoneos-arm64.deb';deb.write_bytes(payload)
+    dist=ROOT/'dist';dist.mkdir(exist_ok=True);deb=dist/'com.cfluid.cardash.diagnostics_0.1.3_iphoneos-arm64.deb';deb.write_bytes(payload)
     sha=hashlib.sha256(payload).hexdigest();(dist/(deb.name+'.sha256')).write_text(sha+'  '+deb.name+'\n')
     (dist/'manifest.json').write_text(json.dumps({**manifest,'deb_sha256':sha,'bytes':len(payload)},indent=2)+'\n');print(json.dumps({'deb':str(deb),'sha256':sha,'bytes':len(payload)},indent=2))
 def simulator():

@@ -7,7 +7,7 @@ case "${1:-}" in
   # using descriptors before changing any file mode or ownership.
   /var/jb/usr/libexec/cardash-diagnostics --prepare
   {
-   echo 'CarDash Diagnostics 0.1.2 install'
+   echo 'CarDash Diagnostics 0.1.3 install'
    date -u
    /var/jb/bin/launchctl bootout system/com.cfluid.cardash.diagnostics >/dev/null 2>&1 || :
    if /var/jb/bin/launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.cfluid.cardash.diagnostics.plist; then

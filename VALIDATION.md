@@ -1,6 +1,6 @@
-# Diagnostic 0.1.2 validation
+# Diagnostic 0.1.3 validation
 
-Target: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine rootless. The phone is disconnected. This version has not been installed or tested on the physical phone.
+Target: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine rootless. The phone is connected over USB/SSH. Version0.1.2 completed12 workers on device and exposed the entitlement and publicKey-type failures. Corrected0.1.3 payload validation is in progress.
 
 ## Local checks
 
@@ -18,8 +18,8 @@ The final release manifest records the committed source revision and exact paylo
 
 ## Required device trial
 
-Fully close an older diagnostic app, install 0.1.2, disconnect real CarPlay receivers, then run CarPlay Diagnostics while unlocked. Allow two to three minutes and share the single log. No USB connection, SSH setup, respring or reinstallation between repeat trials is required by the diagnostic itself.
+Fully close an older diagnostic app, install 0.1.3, disconnect real CarPlay receivers, then run CarPlay Diagnostics while unlocked. Allow two to three minutes and share the single log. No USB connection, SSH setup, respring or reinstallation between repeat trials is required by the diagnostic itself.
 
-The phone must establish signature trust and activation of the new comparison executable, current framework identities, observer coverage, actual service/protocol/error records, effective comparison entitlement, six profile outcomes where permitted, and cleanup. A failed ABI/identity gate is reported; typed callback arguments remain disabled for an unknown image pair. An existing session or stage/cleanup failure withholds later attempts.
+The phone must establish signature trust and activation of the new comparison executable, current framework identities, observer coverage, actual service/protocol/error records, effective comparison entitlement, four profile outcomes where permitted, and cleanup. A failed ABI/identity gate is reported; typed callback arguments remain disabled for an unknown image pair. An existing session or stage/cleanup failure withholds later attempts.
 
 This is a session-start diagnostic. Authentication, a complete receiver, video decoding, native app switching and Tesla output are not implemented. A recorded callback, socket or session is not a verified working display. Missing transport cannot by itself identify MFi as the blocker. Local testing does not guarantee the first physical-device result or rule out a device-specific correction.

@@ -71,7 +71,7 @@ static BOOL ReportName(NSString *name){return [name isKindOfClass:NSString.class
     self.status.text=error.length?@"Helper error — Share diagnostic log":self.active?@"Recording diagnostics…":self.report.length?(self.historicalSelection?@"Previous report — Share diagnostic log":@"Report ready — Share diagnostic log"):@"Ready to run";
     NSData *data=self.report.length?ReadBounded([CDRoot() stringByAppendingPathComponent:self.report],7*1024*1024):nil;
     NSString *text=data?[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]:@"";
-    if(text.length>14000)text=[text substringFromIndex:text.length-14000];self.details.text=error.length?error:text.length?text:@"Version 0.1.2\nNo test starts during installation.\nEach run creates a new log.\nAuthentication and live-video capture are not implemented by this diagnostic.";
+    if(text.length>14000)text=[text substringFromIndex:text.length-14000];self.details.text=error.length?error:text.length?text:@"Version 0.1.3\nNo test starts during installation.\nEach run creates a new log.\nAuthentication and live-video capture are not implemented by this diagnostic.";
     if(self.details.text.length)[self.details scrollRangeToVisible:NSMakeRange(self.details.text.length-1,1)];
 #if CD_SIM_TEST
     if(getenv("CD_SIM_FAIL_SECOND")&&!self.simulatedRetry&&!self.active&&[[NSFileManager defaultManager] fileExistsAtPath:[CDRoot() stringByAppendingPathComponent:@"simulate-failed-run"]]){self.simulatedRetry=YES;self.smokeWritten=NO;dispatch_async(dispatch_get_main_queue(),^{[self run];});return;}

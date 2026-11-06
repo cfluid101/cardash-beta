@@ -1,6 +1,7 @@
 #import "Common.h"
 #import "XPCTrace.h"
 #import "NativeIdentity.h"
+#import "HostPayload.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <dlfcn.h>
@@ -20,6 +21,9 @@
 
 @interface NSObject (CDPrivateCarKit)
 - (id)initWithHostProperties:(id)properties;
+- (id)initWithDisplayName:(id)name wiredIPv6Addresses:(id)wired wirelessIPv6Addresses:(id)wireless port:(long long)port carplayWiFiUUID:(id)wifi deviceIdentifier:(id)identifier publicKey:(id)key sourceVersion:(id)version wiredCarPlaySimulator:(BOOL)simulator;
+- (id)displayName;
+- (id)deviceIdentifier;
 - (void)setWiredCarPlaySimulator:(BOOL)value;
 - (BOOL)isWiredCarPlaySimulator;
 - (void)setWiredIPv6Addresses:(id)value;
@@ -66,6 +70,7 @@ int CDLogWorker(void){
 #if !CD_HOST_TEST
 static BOOL Match(Class cls,NSString *name,const char *ret,NSArray *args,BOOL classMethod=NO){return CDMethodMatches(cls,name,ret,args,classMethod,YES);}
 static NSArray *HostMethods(void){return @[
+    @[@"initWithDisplayName:wiredIPv6Addresses:wirelessIPv6Addresses:port:carplayWiFiUUID:deviceIdentifier:publicKey:sourceVersion:wiredCarPlaySimulator:",@"@",@[@"@",@"@",@"@",@"q",@"@",@"@",@"@",@"@",@"B"]],@[@"displayName",@"@",@[]],@[@"deviceIdentifier",@"@",@[]],
     @[@"initWithHostProperties:",@"@",@[@"@"]],@[@"setWiredCarPlaySimulator:",@"v",@[@"B"]],@[@"isWiredCarPlaySimulator",@"B",@[]],
     @[@"setWiredIPv6Addresses:",@"v",@[@"@"]],@[@"wiredIPv6Addresses",@"@",@[]],@[@"setWirelessIPv6Addresses:",@"v",@[@"@"]],@[@"wirelessIPv6Addresses",@"@",@[]],
     @[@"setPort:",@"v",@[@"q"]],@[@"port",@"q",@[]],@[@"setSourceVersion:",@"v",@[@"@"]],@[@"sourceVersion",@"@",@[]],@[@"setPublicKey:",@"v",@[@"@"]],@[@"publicKey",@"@",@[]]];}
@@ -158,17 +163,21 @@ static int Attempt(NSString *profile){
     struct sockaddr_in6 address={};address.sin6_family=AF_INET6;address.sin6_addr=in6addr_loopback;address.sin6_port=0;
     if(bind(listener,(struct sockaddr *)&address,sizeof(address))||listen(listener,4)){CDEmit(@"listener_failed",@{@"errno":@(errno)});close(listener);return 1;}
     socklen_t size=sizeof(address);if(getsockname(listener,(struct sockaddr *)&address,&size)){close(listener);return 1;}
-    long long port=ntohs(address.sin6_port);BOOL simulator=![profile isEqual:@"root-standard-key"],keyed=![profile isEqual:@"root-simulator-no-key"];
+    long long port=ntohs(address.sin6_port);BOOL simulator=![profile isEqual:@"root-standard-key"],keyed=![profile hasSuffix:@"no-key"];
     CDEmit(@"listener_ready",@{@"address":@"::1",@"port":@(port),@"simulator":@(simulator),@"public_key_present":@(keyed),@"public_key_is_trusted_accessory_identity":@NO});
     id client=nil;BOOL issued=NO,transport=NO,newSession=NO,cleanupConfirmed=NO;std::vector<Connection> clients;
     auto callback=std::make_shared<std::atomic<bool>>(false),nativeSuccess=std::make_shared<std::atomic<bool>>(false);
     BOOL typedCompletion=NO;
     @try {
-        NSObject *host=[[hostClass alloc] initWithHostProperties:@{}];client=[[clientClass alloc] init];if(!host||!client)@throw [NSException exceptionWithName:@"AllocationFailure" reason:@"CarKit initialization returned nil" userInfo:nil];
-        [host setWiredCarPlaySimulator:simulator];[host setWiredIPv6Addresses:@[@"::1"]];[host setWirelessIPv6Addresses:@[]];[host setPort:port];[host setSourceVersion:@"509.0"];
-        NSData *publicKey=keyed?[NSData dataWithBytes:CDPublicKey length:32]:nil;[host setPublicKey:publicKey];
+        NSString *publicKey=keyed?CDPublicKeyString([NSData dataWithBytes:CDPublicKey length:32]):nil;
+        NSObject *host=[[hostClass alloc] initWithDisplayName:@"CarDash Diagnostics" wiredIPv6Addresses:@[@"::1"] wirelessIPv6Addresses:@[] port:port carplayWiFiUUID:nil deviceIdentifier:@"02:43:44:44:49:41" publicKey:publicKey sourceVersion:@"509.0" wiredCarPlaySimulator:simulator];
+        client=[[clientClass alloc] init];if(!host||!client)@throw [NSException exceptionWithName:@"AllocationFailure" reason:@"CarKit initialization returned nil" userInfo:nil];
         BOOL roundtrip=[host isWiredCarPlaySimulator]==simulator&&[host port]==port&&[[host wiredIPv6Addresses] isEqual:@[@"::1"]]&&[[host wirelessIPv6Addresses] count]==0&&[[host sourceVersion] isEqual:@"509.0"]&&(keyed?[[host publicKey] isEqual:publicKey]:[host publicKey]==nil);
         CDEmit(@"host_roundtrip",@{@"matches":@(roundtrip)});if(!roundtrip)@throw [NSException exceptionWithName:@"HostMismatch" reason:@"Host setters did not round trip" userInfo:nil];
+        NSError *archiveError=nil;NSObject *decoded=CDSecureHostRoundTrip(host,&archiveError);
+        BOOL wireMatches=decoded&&[decoded isWiredCarPlaySimulator]==simulator&&[decoded port]==port&&[[decoded wiredIPv6Addresses] isEqual:@[@"::1"]]&&[[decoded wirelessIPv6Addresses] isEqual:@[]]&&[[decoded sourceVersion] isEqual:@"509.0"]&&[[decoded displayName] isEqual:@"CarDash Diagnostics"]&&[[decoded deviceIdentifier] isEqual:@"02:43:44:44:49:41"]&&(keyed?[[decoded publicKey] isEqual:publicKey]:[decoded publicKey]==nil);
+        CDEmit(@"host_secure_coding",@{@"matches":@(wireMatches),@"public_key_type":publicKey?@"NSString":@"nil",@"public_key_encoding":publicKey?@"hex_32_bytes":@"none",@"synthetic_device_identifier":@YES,@"error":CDXPCTraceError(archiveError)});
+        if(!wireMatches)@throw [NSException exceptionWithName:@"HostWireMismatch" reason:@"Host failed local secure-coding round trip; request withheld" userInfo:nil];
         NSDictionary *identity=CDCarKitCompletionIdentity(clientClass);CDEmit(@"completion_identity",identity);typedCompletion=[identity[@"typed_completion_enabled"] boolValue];
         BOOL traceRegistered=CDXPCTraceRegisterClient(client,profile);CDEmit(@"xpc_trace_registration",@{@"registered":@(traceRegistered)});
         auto mainAlive=std::make_shared<std::atomic<bool>>(false);
@@ -232,7 +241,7 @@ int CDWorker(NSString *profile){@autoreleasepool{
 #else
     CDEmit(@"worker_environment",@{@"profile":profile,@"model":CDSystem("hw.machine"),@"build":CDSystem("kern.osversion"),@"uid":@(getuid()),@"euid":@(geteuid())});
     NSDictionary *ipc=CDIPCEnvironment();CDEmit(@"worker_ipc_environment",ipc);
-    if([profile isEqual:@"root-simulator-entitlement-key"]&&![ipc[@"signed_entitlements"][@"com.apple.private.carkit.sessionRequest"] isEqual:@YES]){
+    if([profile hasPrefix:@"root-simulator-entitlement-"]&&![ipc[@"signed_entitlements"][@"com.apple.private.carkit.sessionRequest"] isEqual:@YES]){
         CDEmit(@"request_withheld",@{@"reason":@"entitlement_comparison_invalid_effective_value_not_true"});return 21;
     }
     if(![CDSystem("hw.machine") isEqual:@"iPhone10,2"]||![CDSystem("kern.osversion") isEqual:@"20G75"]){CDEmit(@"unsupported_target",@{@"expected":@"iPhone10,2 / 20G75",@"private_calls_withheld":@YES});return 21;}
@@ -242,7 +251,7 @@ int CDWorker(NSString *profile){@autoreleasepool{
         if([profile isEqual:@"system-log-fallback"]){LegacyLogs();return 0;}
         if(!Load(@"CarKit",@"/System/Library/PrivateFrameworks/CarKit.framework/CarKit"))return 21;
         if([profile isEqual:@"inventory"]){ServiceInventory();ClassInventory(@"CarKit.framework");id observer=Observer();if(observer){Pump(1);CDEmit(@"session_inventory",Session(observer));}return 0;}
-        if([@[@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"root-simulator-entitlement-key",@"root-simulator-baseline-after-key"] containsObject:profile])return Attempt(profile);
+        if([@[@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"root-simulator-entitlement-key",@"root-simulator-entitlement-no-key",@"root-simulator-baseline-after-key"] containsObject:profile])return Attempt(profile);
         CDEmit(@"unknown_profile",@{});return 2;
     }@catch(NSException *e){CDEmit(@"worker_exception",@{@"name":e.name,@"reason":e.reason?:@""});return 1;}
 #endif
