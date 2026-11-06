@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class PackageTests(unittest.TestCase):
     def setUp(self):
-        self.deb=ROOT/'dist/com.cfluid.cardash.diagnostics_0.1.0_iphoneos-arm64.deb'
+        self.deb=ROOT/'dist/com.cfluid.cardash.diagnostics_0.1.1_iphoneos-arm64.deb'
         self.assertTrue(self.deb.is_file(),'Diagnostic DEB is not built')
     def archive(self,name):
         raw=subprocess.check_output(['/usr/bin/ar','-p',str(self.deb),name]);return tarfile.open(fileobj=io.BytesIO(raw),mode='r:xz')

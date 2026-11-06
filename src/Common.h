@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #include <sys/types.h>
 
-#define CD_VERSION @"0.1.0"
+#define CD_VERSION @"0.1.1"
 #define CD_ROOT @"/var/jb/var/lib/cardash-diagnostics"
 #define CD_APP @"/var/jb/Applications/CarDashDiagnostics.app/CarDashDiagnostics"
 #define CD_HELPER @"/var/jb/usr/libexec/cardash-diagnostics"
@@ -16,6 +16,7 @@ BOOL CDWrite(int fd, NSData *data);
 BOOL CDMethodMatches(Class cls, NSString *selector, const char *ret, NSArray<NSString *> *args, BOOL classMethod, BOOL checkOwner);
 NSString *CDConclusion(BOOL issued, BOOL callback, BOOL transport, BOOL observedNewSession);
 NSDictionary *CDCommand(NSString *command);
+NSDictionary *CDIPCEnvironment(void);
 int CDWorker(NSString *profile);
 int CDDaemon(BOOL hostMode);
 int CDPrepare(void);

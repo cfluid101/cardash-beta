@@ -1,10 +1,10 @@
-# CarDash CarPlay Diagnostics 0.1.0
+# CarDash CarPlay Diagnostics 0.1.1
 
 Standalone rootless diagnostic for the recorded **iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine**. It collects one shareable log and attempts the known native CarPlay session-start API. It is not a replacement CarDash beta or a complete CarPlay receiver.
 
 ## On the phone
 
-1. Install `com.cfluid.cardash.diagnostics_0.1.0_iphoneos-arm64.deb` using your normal rootless package installer. No respring is required and installation does not start a session attempt.
+1. Fully close an older **CarPlay Diagnostics** app if it is open. Install `com.cfluid.cardash.diagnostics_0.1.1_iphoneos-arm64.deb` using your normal rootless package installer. No respring is required. Installation performs a status-only helper/socket preflight and does not start a CarPlay session attempt.
 2. Disconnect any real CarPlay receiver. Open **CarPlay Diagnostics**, keep the phone unlocked, and tap **Run diagnostics**. The suite normally takes about two minutes, with a three-minute overall budget plus bounded cleanup.
 3. Wait for **Report ready**, then tap **Share diagnostic log**. Send the single `.log` file. You can run the suite again without reinstalling; each run gets a new report.
 
@@ -14,7 +14,7 @@ The app disables automatic screen sleep only while a test is running in the fore
 
 ## What runs
 
-- Device/build and process snapshots, build manifest, CarKit method encodings and implementation owners.
+- App IPC environment (sandbox state, selected signed entitlements, socket/directory ownership and modes), installation status-only preflight, device/build and process snapshots, build manifest, CarKit method encodings and implementation owners.
 - CarKit/session inventory, display inventory, and an isolated AirPlayReceiver class inventory.
 - Up to four serial native attempts: root + simulator + public test key; root + simulator without public key; root + non-simulator + public test key; mobile identity + simulator + public test key.
 - Each attempt creates its own IPv6-loopback listener on an available port, validates host-property readback, calls `startSessionWithHost:completion:` once, observes for 18 seconds, calls `cancelRequests`, closes its sockets, and checks session state afterward.
@@ -49,6 +49,12 @@ Root CLI, if needed: `/var/jb/usr/libexec/cardash-diagnostics --run`, `--status`
 
 Build: `python3 build.py`. Tests: `python3 -m unittest discover -s tests -p 'test_*.py'`, plus `build/host/gate-tests`. Simulator build: `python3 build.py --simulator`; the optional smoke script uses the separately owned research simulator and a synthetic host worker. Xcode, macOS codesign and Node (build-time generation of a public test key) are required; no phone is contacted by the build.
 
-The rootless archive is independently extracted and checked for ownership, paths, signatures, manifests and scripts. Local process tests cover repeat runs, concurrency, cancellation before a native request, hangs, crashes, orphaned workers and descendants, output bounds, trickled control messages, and installation path protection. Simulator checks exercise Run, report generation, Share-file export and a failed rerun that must export fresh supporting logs instead of the old report. REA inspects the actual arm64 binaries' platform, minimum OS and dependencies.
+The rootless archive is independently extracted and checked for ownership, paths, signatures, manifests and scripts. Local process tests cover a real OS-enforced socket denial, missing sockets, a status-only installer preflight, repeat runs, concurrency, cancellation before a native request, hangs, crashes, orphaned workers and descendants, output bounds, trickled control messages, and installation path protection. Simulator checks exercise Run, report generation, Share-file export and a failed rerun that must export fresh supporting logs instead of the old report. REA inspects the actual arm64 binaries' platform, minimum OS and dependencies.
 
 These checks provide local build/package confidence. **The exact device's signature trust, launchd registration, peer authorization, private API behavior and native session result still require its first installation/test.** No 100% runtime guarantee is claimed. The report is designed to expose those failures in the same install rather than require a different DEB for each test stage.
+
+## 0.1.1 connection correction
+
+The supplied 0.1.0 device log showed a registered launch job but `connect()` failed with `EPERM` before a CarPlay attempt. The diagnostic app had explicitly requested container confinement while also requesting no sandbox. The device build now signs `container-required=false`; the simulator retains its own data container for UI tests. Connection failures report the actual sandbox/entitlement/socket facts, and installation records a root STATUS round trip to separate helper activation from app policy failures. See [IPC-FIX.md](IPC-FIX.md) for evidence and remaining uncertainty.
+
+This correction is locally verified but still needs a phone trial. An EPERM result alone does not prove which sandbox rule or policy caused it; the additional facts avoid presenting that inference as a confirmed on-device fix.

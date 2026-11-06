@@ -210,7 +210,7 @@ int CDDaemon(BOOL hostMode){@autoreleasepool{
         typedef int (*Activate)(const char *,int **,size_t *);Activate activate=(Activate)dlsym(RTLD_DEFAULT,"launch_activate_socket");int *fds=NULL;size_t count=0;
         if(!activate||activate("ControlListeners",&fds,&count)||count!=1){fprintf(stderr,"launchd socket unavailable\n");free(fds);return 1;}listener=fds[0];free(fds);
     }
-    fcntl(listener,F_SETFD,FD_CLOEXEC);double last=CDClock();
+    fcntl(listener,F_SETFD,FD_CLOEXEC);double last=CDClock();CDEmit(@"helper_ready",@{@"version":CD_VERSION,@"pid":@(getpid()),@"euid":@(geteuid()),@"native_attempt_started":@NO});
     while(!exiting){@autoreleasepool{
         struct pollfd ready={listener,POLLIN,0};int result=poll(&ready,1,100);
         if(result>0&&(ready.revents&POLLIN)){

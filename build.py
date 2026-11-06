@@ -43,9 +43,11 @@ def app(shared,out,sdk,sim=False):
     else:base+=['-arch','arm64','-miphoneos-version-min=16.6']
     sdkpath=run(['xcrun','--sdk',sdk,'--show-sdk-path'])
     run([*base,'-isysroot',sdkpath,'app/main.mm','src/Common.m','-framework','Foundation','-framework','UIKit','-o',bundle/'CarDashDiagnostics'])
-    plist(bundle/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.diagnostics.app','CFBundleExecutable':'CarDashDiagnostics','CFBundleName':'CarPlay Diagnostics','CFBundleDisplayName':'CarPlay Diagnostics','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'1','CFBundleShortVersionString':'0.1.0','MinimumOSVersion':'16.6','CFBundleSupportedPlatforms':['iPhoneSimulator' if sim else 'iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
+    plist(bundle/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.diagnostics.app','CFBundleExecutable':'CarDashDiagnostics','CFBundleName':'CarPlay Diagnostics','CFBundleDisplayName':'CarPlay Diagnostics','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'2','CFBundleShortVersionString':'0.1.1','MinimumOSVersion':'16.6','CFBundleSupportedPlatforms':['iPhoneSimulator' if sim else 'iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
     icon(bundle/'AppIcon@2x.png',120);icon(bundle/'AppIcon@3x.png',180)
-    ent=out/'app-entitlements.plist';plist(ent,{'application-identifier':'com.cfluid.cardash.diagnostics.app','platform-application':True,'com.apple.private.security.no-sandbox':True,'com.apple.private.security.container-required':True})
+    # The device client needs IPC outside an application container. The simulator
+    # intentionally keeps its own container for the synthetic Run/Share tests.
+    ent=out/'app-entitlements.plist';plist(ent,{'application-identifier':'com.cfluid.cardash.diagnostics.app','platform-application':True,'com.apple.private.security.no-sandbox':True,'com.apple.private.security.container-required':bool(sim)})
     run(['/usr/bin/codesign','--force','--sign','-','--entitlements',ent,bundle]);run(['/usr/bin/codesign','--verify','--strict',bundle]);return bundle
 def native():
     shared=prepare();out=ROOT/'build/device';out.mkdir(exist_ok=True)
@@ -61,7 +63,7 @@ def native():
     for name in ['control','postinst','prerm','postrm']:shutil.copy2(ROOT/'packaging'/name,stage/'DEBIAN'/name)
     job={'Label':'com.cfluid.cardash.diagnostics','ProgramArguments':['/var/jb/usr/libexec/cardash-diagnostics','--daemon'],'UserName':'root','RunAtLoad':False,'KeepAlive':False,'ProcessType':'Adaptive','ExitTimeOut':8,'ThrottleInterval':10,'Umask':0o027,'StandardOutPath':'/var/jb/var/lib/cardash-diagnostics/helper-bootstrap.log','StandardErrorPath':'/var/jb/var/lib/cardash-diagnostics/helper-bootstrap.log','Sockets':{'ControlListeners':{'SockPathName':'/var/jb/var/lib/cardash-diagnostics/control.sock','SockPathMode':0o660,'SockPathOwner':0,'SockPathGroup':501,'SockType':'stream','SockFamily':'Unix'}}}
     plist(stage/'var/jb/Library/LaunchDaemons/com.cfluid.cardash.diagnostics.plist',job)
-    manifest={'version':'0.1.0','target':'iPhone10,2 / 20G75 / Dopamine rootless','device_tested':False,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'sha256':{}}
+    manifest={'version':'0.1.1','target':'iPhone10,2 / 20G75 / Dopamine rootless','device_tested':False,'source_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),'sha256':{}}
     for path in sorted((stage/'var/jb').rglob('*')):
         if path.is_file():manifest['sha256'][str(path.relative_to(stage))]=hashlib.sha256(path.read_bytes()).hexdigest()
     (stage/'var/jb/usr/share/cardash-diagnostics/manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
@@ -84,7 +86,7 @@ def native():
     for name,data in [('debian-binary',b'2.0\n'),('control.tar.xz',tar_bytes(stage/'DEBIAN')),('data.tar.xz',tar_bytes(stage))]:
         header=f'{name:<16}{1793923200:<12}{0:<6}{0:<6}{"100644":<8}{len(data):<10}`\n'.encode('ascii');assert len(header)==60
         payload+=header+data+(b'\n' if len(data)%2 else b'')
-    dist=ROOT/'dist';dist.mkdir(exist_ok=True);deb=dist/'com.cfluid.cardash.diagnostics_0.1.0_iphoneos-arm64.deb';deb.write_bytes(payload)
+    dist=ROOT/'dist';dist.mkdir(exist_ok=True);deb=dist/'com.cfluid.cardash.diagnostics_0.1.1_iphoneos-arm64.deb';deb.write_bytes(payload)
     sha=hashlib.sha256(payload).hexdigest();(dist/(deb.name+'.sha256')).write_text(sha+'  '+deb.name+'\n')
     (dist/'manifest.json').write_text(json.dumps({**manifest,'deb_sha256':sha,'bytes':len(payload)},indent=2)+'\n');print(json.dumps({'deb':str(deb),'sha256':sha,'bytes':len(payload)},indent=2))
 def simulator():

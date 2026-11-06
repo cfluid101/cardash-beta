@@ -1,6 +1,6 @@
 Package: com.cfluid.cardash.diagnostics
 Name: CarDash CarPlay Diagnostics
-Version: 0.1.0
+Version: 0.1.1
 Architecture: iphoneos-arm64
 Section: Development
 Depends: firmware (>= 16.6), firmware (<< 16.7), uikittools

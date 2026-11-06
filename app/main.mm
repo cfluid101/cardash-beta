@@ -31,6 +31,7 @@ static BOOL ReportName(NSString *name){return [name isKindOfClass:NSString.class
 }
 - (void)viewDidLoad {
     [super viewDidLoad];self.view.backgroundColor=UIColor.systemBackgroundColor;self.events=[NSMutableArray array];self.report=@"";self.lastError=@"";
+    [self event:@"app_ipc_environment" detail:CDIPCEnvironment()];
     UILabel *title=[UILabel new];title.text=@"CarPlay Diagnostics";title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];title.adjustsFontForContentSizeCategory=YES;title.numberOfLines=0;
     UILabel *intro=[UILabel new];intro.text=@"Run the complete diagnostic once, then share one log. Keep this app open and the phone unlocked for about 2–3 minutes. Disconnect any real CarPlay receiver first.";intro.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];intro.numberOfLines=0;
 #if CD_SIM_TEST
@@ -70,7 +71,7 @@ static BOOL ReportName(NSString *name){return [name isKindOfClass:NSString.class
     self.status.text=error.length?@"Helper error — Share diagnostic log":self.active?@"Recording diagnostics…":self.report.length?(self.historicalSelection?@"Previous report — Share diagnostic log":@"Report ready — Share diagnostic log"):@"Ready to run";
     NSData *data=self.report.length?ReadBounded([CDRoot() stringByAppendingPathComponent:self.report],7*1024*1024):nil;
     NSString *text=data?[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]:@"";
-    if(text.length>14000)text=[text substringFromIndex:text.length-14000];self.details.text=error.length?error:text.length?text:@"Version 0.1.0\nNo test starts during installation.\nEach run creates a new log.\nAuthentication and live-video capture are not implemented by this diagnostic.";
+    if(text.length>14000)text=[text substringFromIndex:text.length-14000];self.details.text=error.length?error:text.length?text:@"Version 0.1.1\nNo test starts during installation.\nEach run creates a new log.\nAuthentication and live-video capture are not implemented by this diagnostic.";
     if(self.details.text.length)[self.details scrollRangeToVisible:NSMakeRange(self.details.text.length-1,1)];
 #if CD_SIM_TEST
     if(getenv("CD_SIM_FAIL_SECOND")&&!self.simulatedRetry&&!self.active&&[[NSFileManager defaultManager] fileExistsAtPath:[CDRoot() stringByAppendingPathComponent:@"simulate-failed-run"]]){self.simulatedRetry=YES;self.smokeWritten=NO;dispatch_async(dispatch_get_main_queue(),^{[self run];});return;}

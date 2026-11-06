@@ -4,6 +4,7 @@
 #include <sys/sysctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -49,6 +50,33 @@ NSString *CDConclusion(BOOL issued,BOOL callback,BOOL transport,BOOL newSession)
     if(callback)return @"callback_observed_without_transport";
     return issued?@"request_issued_no_callback_or_transport":@"request_withheld";
 }
+static NSDictionary *CDPathFacts(NSString *path) {
+    struct stat st={};int code=lstat(path.fileSystemRepresentation,&st)==0?0:errno;
+    NSMutableDictionary *facts=[@{@"path":path,@"stat_errno":@(code)} mutableCopy];
+    if(!code){facts[@"uid"]=@(st.st_uid);facts[@"gid"]=@(st.st_gid);facts[@"mode"]=[NSString stringWithFormat:@"%04o",st.st_mode&07777];facts[@"is_socket"]=@(S_ISSOCK(st.st_mode));facts[@"is_directory"]=@(S_ISDIR(st.st_mode));facts[@"is_symlink"]=@(S_ISLNK(st.st_mode));}
+    return facts;
+}
+NSDictionary *CDIPCEnvironment(void) {
+    NSMutableDictionary *facts=[@{@"pid":@(getpid()),@"euid":@(geteuid()),@"egid":@(getegid()),@"runtime_directory":CDPathFacts(CDRoot()),@"socket":CDPathFacts([CDRoot() stringByAppendingPathComponent:@"control.sock"])} mutableCopy];
+    static void *sandbox=NULL,*security=NULL;static dispatch_once_t once;
+    dispatch_once(&once,^{sandbox=dlopen("/usr/lib/libsandbox.1.dylib",RTLD_LAZY|RTLD_LOCAL);security=dlopen("/System/Library/Frameworks/Security.framework/Security",RTLD_LAZY|RTLD_LOCAL);});
+    typedef int (*SandboxCheck)(pid_t,const char *,int,...);
+    SandboxCheck check=sandbox?(SandboxCheck)dlsym(sandbox,"sandbox_check"):NULL;
+    facts[@"sandbox_active"]=check?@(check(getpid(),NULL,0)):@"unavailable";
+    typedef CFTypeRef (*TaskCreate)(CFAllocatorRef);typedef CFTypeRef (*EntitlementCopy)(CFTypeRef,CFStringRef,CFErrorRef *);
+    TaskCreate create=security?(TaskCreate)dlsym(security,"SecTaskCreateFromSelf"):NULL;EntitlementCopy copy=security?(EntitlementCopy)dlsym(security,"SecTaskCopyValueForEntitlement"):NULL;
+    CFTypeRef task=create&&copy?create(kCFAllocatorDefault):NULL;NSMutableDictionary *ents=[NSMutableDictionary dictionary];
+    for(NSString *key in @[@"application-identifier",@"platform-application",@"com.apple.private.security.container-required",@"com.apple.private.security.no-sandbox"]){
+        CFTypeRef value=task?copy(task,(__bridge CFStringRef)key,NULL):NULL;id decoded=value?CFBridgingRelease(value):nil;
+        ents[key]=[decoded isKindOfClass:NSString.class]||[decoded isKindOfClass:NSNumber.class]?decoded:@"absent_or_unavailable";
+    }
+    if(task)CFRelease(task);facts[@"signed_entitlements"]=ents;return facts;
+}
+static NSDictionary *CDConnectionFailure(int code) {
+    NSString *name=@"OTHER";switch(code){case EPERM:name=@"EPERM";break;case EACCES:name=@"EACCES";break;case ENOENT:name=@"ENOENT";break;case ECONNREFUSED:name=@"ECONNREFUSED";break;case ETIMEDOUT:name=@"ETIMEDOUT";break;}
+    NSString *message=code==EPERM||code==EACCES?@"Helper connection denied by system policy or permissions — share diagnostic log":@"Helper unavailable — export this diagnostic and installation log";
+    return @{@"error":message,@"stage":@"connect",@"errno":@(code),@"errno_name":name,@"errno_description":@(strerror(code)),@"ipc_diagnostics":CDIPCEnvironment()};
+}
 NSDictionary *CDCommand(NSString *command) {
     int fd=socket(AF_UNIX,SOCK_STREAM,0);if(fd<0)return @{@"error":@"Cannot create helper socket"};
     struct timeval timeout={3,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
@@ -56,7 +84,7 @@ NSDictionary *CDCommand(NSString *command) {
     struct sockaddr_un address={};address.sun_family=AF_UNIX;NSString *path=[CDRoot() stringByAppendingPathComponent:@"control.sock"];
     if(path.length>=sizeof(address.sun_path)){close(fd);return @{@"error":@"Helper socket path is too long"};}
     strlcpy(address.sun_path,path.fileSystemRepresentation,sizeof(address.sun_path));
-    if(connect(fd,(struct sockaddr *)&address,sizeof(address))<0){int code=errno;close(fd);return @{@"error":@"Helper unavailable — export this diagnostic and installation log",@"errno":@(code)};}
+    if(connect(fd,(struct sockaddr *)&address,sizeof(address))<0){int code=errno;close(fd);return CDConnectionFailure(code);}
     if(!CDWrite(fd,[[command stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding])){close(fd);return @{@"error":@"Helper request failed"};}
     NSMutableData *data=[NSMutableData data];char b[512];
     while(data.length<8192){ssize_t n=read(fd,b,sizeof(b));if(n<=0)break;[data appendBytes:b length:n];if(memchr(b,'\n',n))break;}
