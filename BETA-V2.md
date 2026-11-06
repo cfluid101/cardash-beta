@@ -1,86 +1,69 @@
-# CarDash V2 — 2.0.0 beta 24
+# CarDash V2 — 2.0.0 beta 25
 
-CarDash V2 serves a landscape CarPlay-style dashboard to your car's browser over the iPhone's Personal Hotspot. This beta includes native app-window capture, targeted touch, an on-screen dashboard keyboard, and automatic background lifecycle support for the selected app. A small CarDash V2 companion app is included to take the phone’s foreground while the chosen app streams in the background. Immortalizer, CarBridge and the Canary debugging app are not required.
+This testing release removes setup codes and addresses dashboard loading, swiping, navigation selection, adaptive app grids and Now Playing artwork. It was built and tested locally while the owner's iPhone was disconnected. Beta25 has not yet been installed or measured in the Tesla or on a phone.
 
-## Requirements
+## Requirements and isolation
 
-- iPhone 8, iPhone 8 Plus or iPhone X (A11), rootless jailbreak, iOS 16.6.x. The package rejects other hardware and iOS versions.
-- Verified device: iPhone 8 Plus, iOS 16.6, Dopamine. iPhone 8/X and 16.6.1 remain unverified.
-- PreferenceLoader, uikittools and a compatible tweak loader (the test device uses ElleKit).
-- Personal Hotspot and a browser connected to it. Use a strong hotspot password and only trusted connected devices; dashboard traffic uses local HTTP.
+- Rootless jailbreak on A11 iPhone 8, 8 Plus or X, iOS 16.6.x. The installer rejects other models/versions. Earlier device trials used iPhone 8 Plus, iOS 16.6 and Dopamine; iPhone 8/X and 16.6.1 remain unverified.
+- PreferenceLoader, uikittools and a compatible tweak loader (ElleKit on the test device).
+- Personal Hotspot and a connected browser. Setup codes are gone: devices admitted to the trusted hotspot can obtain the single available controller. Local HTTP traffic is not encrypted.
 
-This package installs separately as **CarDash V2 Beta** (`com.cfluid.cardash.v2`). It does not replace CarDash 1.x, migrate its preferences, or delete saved state. V2 has its own app switches and wallpaper selection. The original service, if installed, remains separate on its old port; V2 uses port 8766.
+The package is **CarDash V2 Beta** (`com.cfluid.cardash.v2`). It uses its own service, preferences, companion and port 8766. Updating it does not replace CarDash 1.x, migrate original preferences or delete original saved state. Existing V2 app switches, wallpaper and appearance choices are retained. Old pairing records are unused; no state cleanup/migration is performed.
 
 ## Install and connect
 
-1. Download the release `.deb` on the jailbroken iPhone. Open it in a local DEB installer such as Filza and install with dependencies satisfied in Sileo. This is a DEB download, not a Sileo repository URL.
-2. On the first V2 installation, respring using your jailbreak's normal control, then unlock the phone. This loads V2's native hooks. V2's service starts automatically; no SSH or Canary is needed. After future updates that change native hooks, respring again.
-3. Open **Settings → CarDash V2 Beta**. Enable the apps you want to show. Open each chosen app once on the phone to finish its sign-in, permissions and initial setup.
-4. Enable Personal Hotspot. Connect the Tesla to it. Keep the phone unlocked during pairing and app selection.
-5. In iPhone Settings → CarDash V2 Beta, tap **Open Setup in Safari**. Alternatively, open `http://127.0.0.1:8766/setup.html` directly in Safari on that iPhone. Choose **Create setup code on phone**.
-6. In the Tesla browser open **http://100.99.10.2:8766/**. Enter the eight-digit code under Native connection, leave **Remember this browser** checked, then press **Connect**. Codes expire after two minutes, work once, and are invalidated after ten wrong guesses. Other hotspot devices can also use `http://172.20.10.1:8766/`.
-7. Choose an app while the phone is unlocked. The selected app may briefly appear on the phone during preparation, then the included CarDash V2 companion takes the foreground. Once its landscape window is streaming, the phone may be locked. Keep the car browser visible. The existing selected app can continue rendering and accepting supported touch/keyboard input while locked.
+1. Download the DEB from the GitHub release and install it on the jailbroken iPhone using Filza or another DEB installer, with dependencies supplied by Sileo. The release URL is not a Sileo repository.
+2. Respring after installation, unlock the phone, and reopen any apps used for testing. The V2 service starts automatically. There is no SSH or Canary requirement.
+3. In **Settings → CarDash V2 Beta**, enable the desired apps. Complete their sign-in and permissions on the phone first.
+4. Connect the Tesla to Personal Hotspot and open **http://100.99.10.2:8766/**. Other hotspot browsers may use **http://172.20.10.1:8766/**. The dashboard connects automatically, with no setup code, Remember checkbox or stored browser credential.
+5. Select an app while the phone is unlocked. During preparation it may briefly appear on the phone, then the bundled **CarDash V2** companion takes the foreground. The selected native window stays landscape in the car browser. Once streaming, the phone can be locked for continuation testing.
 
-Pairing is remembered by this browser at this address until you choose **Forget this browser** or clear its site data. Reopening the page reconnects without another code when the phone is unlocked. A different browser or address needs its own initial pairing. Use **Reconnect** after an explicit **End**; End retains the saved pairing. Only one browser controller connects at a time. Closing or hiding the browser ends its app session; reconnection never automatically launches an app. The companion keeps the phone awake while its setup screen is visible; the Side button still locks it. New app selection, cold launch and setup while locked are not supported in this beta. Keeping an already selected app active while locked is the behavior verified so far.
+The phone's **Connection Help in Safari** button is optional help; it does not acquire the car's controller. Only one browser controller can connect at a time. Close or End the other CarDash page if occupied. Reload or **Reconnect** reconnects without a code. **End** stops the session until Reconnect/reload. Hiding or closing the page ends its app session; returning reconnects but does not cold-launch an app. A lost browser expires through the existing six-second heartbeat lease.
 
-## What changed
+Dashboard connection itself can occur while locked. **Choosing a different app or cold-launching one still requires unlock.** This is separate from keeping an already selected app rendering and accepting supported input while locked. The companion keeps the phone awake while visible; Side still locks it.
 
-- Every real installed-app icon uses the same native landscape/background session path, including Maps and the currently playing app. The built-in Now Playing and Settings tiles remain dashboard views. Apps whose native session cannot be prepared report unavailable; individual surfaces such as video can still fail within a connected session. There is no screen-mirroring fallback.
-- Landscape-only native app windows, independent of the phone's orientation; no Phone fit mode.
-- Swipe right from the first app page to Dashboard/Now Playing, and left to return. Swipes may begin on app icons; ordinary taps still launch them.
-- Remembered browser pairing, explicit Reconnect and Forget controls. Canary and the companion are excluded from the dashboard app catalog. Canary is not shipped; the companion is a small phone setup screen with no debug server.
-- Selected-window touch mapping and a dashboard keyboard for supported text fields.
-- Built-in, finite lifecycle leases; no external backgrounding tweak dependency.
-- Wake/rotation handling for the tested app/window configurations and cleanup when the session ends or heartbeats stop.
-- Actual phone app icons, including supported system icon themes, with the approved test theme’s Home/Now Playing assets and wallpapers.
-- Preserves the tested CarPlay fonts, geometry, wallpapers, Home button, glass styling and animations. Browser glass/shader rendering remains an approximation; exact parity on every real CarPlay display is unverified.
-- Beta24 adds automatic isolated service startup, remembered browser pairing, a dedicated phone setup page, dashboard swipe navigation and an A11/iOS 16.6.x install gate.
-- App switching waits for the previous selection to close. Remembered reconnection detaches unfinished work from the retired controller so delayed responses cannot block or overwrite the new session. App titles refresh when the current catalog arrives.
+## Changes in beta25
 
-**YouTube video image is not supported in this beta:** on YouTube 21.30.5, the app controls and audio worked but the video region stayed black in Chrome, including while the video was visibly playing on the phone. A fresh process and returning from Picture in Picture to inline playback did not resolve it. Temporary diagnostics found an attached video layer with both reported capture-protection flags false; direct exports of that video layer and its immediate content child were empty. This is an unresolved selected-window video-capture limitation; DRM was not established as the cause. The diagnostic code is not shipped. YouTube Music audio controls are a separate verified behavior.
+- **No setup codes:** automatic hotspot connection, bounded retries and the existing single-controller, same-origin, peer and session-generation checks.
+- **Stable icons and artwork:** unchanged state polls update images in place instead of rebuilding the grid/dock. Switching native apps no longer clears shared icons, wallpaper or artwork. At most two image requests run concurrently, and unchanged wallpapers are not decoded each second.
+- **Frame scheduling:** removes the fixed 200 ms delay after every completed capture/decode; a frame cycle targets a minimum 100 ms total, with one request/decode in flight. It reuses the canvas backing buffer and pauses frame requests on hidden native views while retaining the app lease. This is a scheduling change, not a measured 10 fps guarantee on an iPhone/Tesla.
+- **Dashboard swipe:** right from the first app page opens Dashboard; left returns. Gestures work from app icons and non-control dashboard card surfaces, including mouse-style pointer events. Media buttons and native app gestures retain their own input.
+- **Last navigation app:** V2 remembers the last enabled Maps, Waze, Google Maps or recognized CarPlay navigation app. Dashboard shows that app's live native window preview; tapping expands the same selection. Selecting music does not overwrite the saved navigation choice.
+- **Adaptive grid:** the recovered 4–5-column and 2–4-row geometry now uses the available viewport instead of always reducing its logical height to 320 points. Local 1280×720 and 1920×1080 layouts use 5×4; 800×480 uses 5×2. Browser zoom and viewport size affect the count.
+- **Now Playing artwork:** a track/app change no longer leaves the previous item's cover behind when the new metadata lacks artwork. The browser retains loaded images during same-item refresh and app switching. Artwork actually delivered by YouTube Music still requires device verification.
 
-The wide layout does not turn an iPhone app into its iPad binary or force iPad-only resources. Some apps may not adapt, may block capture, or may use unsupported windows/text responders. The keyboard is CarDash's dashboard keyboard, not a captured Apple/iPad keyboard.
+The approved wallpapers, Home/Now Playing assets, fonts and native phone icon source are retained. The landscape-window capture, orientation lease, native input, keyboard and background lifecycle implementation are unchanged from the preceding release. Canary is excluded; the clean companion remains necessary for phone foreground handoff.
 
-## Verified so far
+The navigation preview is the selected app's window, **not Apple's separate CarPlay Dashboard scene**. It can include the app's own controls and letterboxing. CarDash has one native capture selection: entering Dashboard may switch that selection to the last navigation app while unlocked. If another app is selected while locked, a new map selection must wait for unlock. This does not reproduce simultaneous CarPlay template scenes or guarantee pixel-identical glass/animations.
 
-On iPhone 8 Plus/iOS 16.6/Dopamine, independent beta23 tests ran without Immortalizer loaded in the trial SpringBoard:
+## Validation and remaining device checks
 
-| App | Recorded result |
-| --- | --- |
-| Canary test app | 90.58 seconds locked with wake/rotation, continuous wide capture, actual button responses, keyboard insertion/delete/Done, then normal-window restoration and reconnect |
-| Waze 5.21.0 | 75.49 seconds locked with wake/rotation, wide map/menu input and search keyboard; text was cleared and no route was started |
-| YouTube Music 6.34.1 | 90.43 seconds locked with wake/rotation and native pause/resume; final playback paused; stopping browser heartbeats expired the lifecycle lease and rejected old credentials after 8.21 seconds |
+Local tests cover code-free connect, conflict/retry/End, stale requests, lease expiry, geometry/input/text queues, media artwork transitions, navigation classification, icon caching, swipe behavior, adaptive geometry and package isolation. Chrome integration with 4× CPU throttling and a delayed loopback fixture verified automatic connection, loaded icons, stable DOM nodes, bounded image requests, no repeated image downloads on app switching, a visible native navigation preview, expansion without reselecting, and zero frame requests while the native view is hidden. Native frames/metadata in this integration fixture are synthetic; it does not emulate jailbroken UIKit or measure a Tesla.
 
-Each selected window was 1024×600, captured as 3072×1800 on this 3× device. No portrait frames or browser loss were observed in these finite trials. All three windows subsequently returned to their recorded normal dimensions after session cleanup. These are short device trials, not all-app or endurance guarantees.
+Earlier finite device trials remain historical evidence: beta23 Canary ran locked for 90.58 seconds, Waze 5.21.0 for 75.49 seconds and YouTube Music 6.34.1 for 90.43 seconds, with landscape capture and the recorded native controls. A beta24 companion candidate passed a further 65.02-second locked Waze trial. These are not beta25 device acceptance.
 
-Beta24 was installed and upgraded on the same iPhone. Its package started the V2 service automatically as root, launchd restarted it after a scoped termination test, eight-digit pairing succeeded, actual themed icons loaded, and the restored Home/wallpaper/fonts were checked in the live browser. Waze again produced 1024×600 native landscape content with actual menu input. The approved theme assets and core lifecycle-hook behavior are retained from beta23. The app adapter excludes the companion; shared process-identity helpers change native binary bytes, and CSS adds the gesture touch-action rule. Binary identity with beta23 is not claimed. The owner confirmed the Preferences button opens Safari; a dedicated phone pairing page now avoids presenting the empty unpaired dashboard. Actual Tesla connection still needs vehicle testing.
+Please test while parked first:
 
-An earlier beta24 companion candidate passed a new Waze trial: automatic handoff to the companion, 65.02 seconds locked with the screen off, actual native menu open/close, and 166.14 seconds of browser observation with zero losses or portrait frames. Remembered reload reconnected without a code; reconnection while locked retained the credential and waited for unlock.
+- Real Tesla hotspot connection/reload without a setup code; another browser holding the controller.
+- Icons and wallpaper on cold load, rapid app switching, and swipe both ways across Dashboard and app pages.
+- Grid sizing at the actual Tesla viewport/zoom and touch near every edge.
+- Waze/Maps selection, Dashboard preview, expansion, and persistence of the last navigation app after a service restart.
+- YouTube Music artwork across track changes, native Now Playing layout, playback and pause/resume.
+- Select while unlocked, then lock, lift/wake and rotate; verify landscape frames, native touch and keyboard. Different-app selection still requires unlock.
+- Hotspot off/on, browser hide/reload, heartbeat cleanup, long sessions, heat, battery, latency, calls and memory pressure.
 
-The final candidate passed two unlocked rapid-switch trials (leaving Calculator during selection, then selecting Waze): 58.00 and 72.69 seconds of Waze observation, with 231 and 290 samples respectively, no connection losses or portrait frames, and native menu input. Holding an old deselect reply, ending the controller, reconnecting with remembered pairing and selecting Calculator also passed: releasing the old reply left the new landscape session intact. Live-browser synthetic touch events navigated Home to Dashboard and back without launching the swiped icon; physical Tesla touch remains to be tested. These finite checks do not establish endurance or eliminate every intermittent app handoff failure; an earlier candidate's warm-switch failure is retained in the development evidence.
+**YouTube video remains unresolved:** earlier YouTube 21.30.5 trials showed moving video on the phone while the browser's video region stayed black. Controls/audio could work; direct video-layer export was empty in a separate diagnostic build. DRM was not established as the cause. That diagnostic code is not shipped, and this release does not claim to fix video capture.
 
-The preceding candidate also recovered from an intentionally terminated selected Calculator process into Waze without restarting the daemon. Recovery requires positive kernel evidence that the selected process ended, plus acknowledgment that its lifecycle lease ended; uncertain cleanup still reports unavailable. The final artifact retains this behavior and adds bounded handoff diagnostics. Host native/controller/browser regressions and package audits passed. Preservation checks found all 585 original host entries, the original DEB and 22 original device files unchanged.
-
-Beta release artifact: `com.cfluid.cardash.v2_2.0.0~beta.24_iphoneos-arm64.deb` (27,763,716 bytes). SHA-256: `b9ae908f8caed432a93a74307bd5c50bdbea140e2fd4da23c59b0ab31a1e827a`. The extracted 52 files and 28 directories passed byte/mode, numeric root ownership, signature, dependency and V2-path isolation checks. This is a testing prerelease with the YouTube video and acceptance limits described above.
-
-## Tesla test checklist
-
-Test while parked first. Report phone model/iOS/jailbreak, app/version, Tesla software/browser version and exact action that failed. Do not share pairing codes or private app contents in a public issue.
-
-- Initial page access over the real hotspot, eight-digit pairing and app selection.
-- Landscape sizing and touch at each screen edge in the Tesla viewport.
-- Waze search, navigation prompts and moving-location behavior when appropriate; stationary map/menu operation is the only recorded navigation evidence.
-- YouTube Music Now Playing/playback and keyboard behavior in chosen apps. The tested older YouTube Music version shows an unsupported-version banner but its Now Playing playback worked.
-- Lock, lift/wake and physical rotation after selecting an app; keep the dashboard landscape.
-- Hotspot off/on, browser hide/reload, session expiry and remembered reconnection after unlock; verify Forget requires a new setup code.
-- Longer sessions, battery use, heat, latency, memory pressure, calls and other interruptions.
-
-Actual Tesla/hotspot end-to-end behavior, long-duration thermal/battery performance, all-app compatibility, DRM/secure surfaces, complex IME input and exact iOS 27 visual parity remain unverified.
+Wide layout does not supply an iPad binary or iPad-only resources. Some apps, protected surfaces and text responders are unsupported. The keyboard is CarDash's dashboard keyboard. All-app compatibility, moving navigation, exact CarPlay visual parity and sustained device performance remain unverified.
 
 ## Recovery and removal
 
-If setup does not open, confirm the jailbreak is active, dependencies are installed, then reinstall this V2 DEB and respring/unlock. If a session becomes unavailable, End it, unlock, and use Reconnect (or pair if this browser was not remembered); reopening the selected app may be necessary. A fresh app process is required after its injected library changes.
+If unavailable, End, unlock, Reconnect and choose the app again. Reopening the app may be necessary. Confirm the jailbreak and dependencies are active if the page does not load.
 
-Remove **CarDash V2 Beta** only through the package manager, then respring to unload its hooks from existing processes. Removal stops only the V2 service and unregisters only its companion app. It preserves both original CarDash state and V2 preferences; it does not uninstall CarDash 1.x. The V2 network alias may remain until reboot. Re-jailbreak after a reboot before using V2 again.
+Remove only **CarDash V2 Beta** using the package manager, then respring. Removal stops only the V2 service and unregisters its companion, preserving original CarDash and both preference stores. The V2 network alias may remain until reboot. Re-jailbreak after reboot.
 
-The release contains no SSH password, controller credential, device log, Canary binary, Immortalizer code or unrelated firmware files. Map/search providers may receive map/search requests when those dashboard features are used; selected-app activity follows each app's own network behavior.
+The download contains no SSH password, controller credential, device logs, personal theme captures, Canary binary, Immortalizer code or unrelated firmware files. Selected apps and fallback map/search providers use their normal network services.
+
+## Download verification
+
+DEB SHA-256: `72cc51617d9544e0f36b4a369c5f65819e60c5717a62c551e235cba99f548161`. Size: 27,758,266 bytes. The extracted package contains 52 files and 28 directories, passed byte/mode and V2-path audits, and has numeric root ownership throughout. The native app adapter and lifecycle dylibs are byte-for-byte identical to beta24.
