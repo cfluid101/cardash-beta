@@ -2,7 +2,7 @@
 set -eu
 case "${1:-}" in
  configure)
-  ROOT=/var/mobile/Library/CarDashDiagnostics
+  ROOT=/var/jb/var/lib/cardash-diagnostics
   # The helper checks directory ownership and rejects symlinks/hardlinked logs
   # using descriptors before changing any file mode or ownership.
   /var/jb/usr/libexec/cardash-diagnostics --prepare

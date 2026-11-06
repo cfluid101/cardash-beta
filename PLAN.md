@@ -14,12 +14,12 @@ Spec: DESIGN.md. Execution uses the existing executing-plans/TDD workflow; the u
 - Export remains usable if the helper or a stage fails.
 
 ## Task 1 — Runner and native probe
-- [ ] Write failing real host integration tests and ABI/conclusion tests.
-- [ ] Implement bounded logging, peer-checked control service, worker supervision and guarded native probes.
-- [ ] Run the complete host suite and commit.
+- [x] Write failing real host integration tests and ABI/conclusion tests.
+- [x] Implement bounded logging, peer-checked control service, worker supervision and guarded native probes.
+- [x] Run the complete host suite and commit.
 
 ## Task 2 — App, rootless package, review
-- [ ] Add Run/Cancel/Share app with failure export; build device and simulator variants.
-- [ ] Build rootless DEB, inspect extracted payload, signatures, paths, scripts and plist; verify with REA.
-- [ ] Run simulator smoke where possible and full local checks.
-- [ ] Fresh independent review; fix important findings with regressions. Verify originals and deliver DEB/report/instructions.
+- [x] Add Run/Cancel/Share app with failure export; build device and simulator variants.
+- [x] Build rootless DEB, inspect extracted payload, signatures, paths, scripts and plist; verify with REA.
+- [x] Run simulator smoke where possible and full local checks.
+- [x] Fresh independent review; fix important findings with regressions. Verify originals and deliver DEB/report/instructions.

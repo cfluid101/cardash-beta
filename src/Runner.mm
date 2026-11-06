@@ -22,8 +22,20 @@ static std::atomic<bool> cancelled(false),exiting(false);
 static NSObject *stateLock;
 static BOOL running=NO;
 static NSString *reportName=@"",*lastError=@"";
+static int runtimeDirectory=-1;
+static BOOL RuntimePathStillMatches(void){
+    int now=open(CDRoot().fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(now<0)return NO;
+    struct stat a,b;BOOL same=fstat(now,&a)==0&&fstat(runtimeDirectory,&b)==0&&a.st_dev==b.st_dev&&a.st_ino==b.st_ino;close(now);return same;
+}
 static void Terminate(int sig){(void)sig;cancelled=true;exiting=true;}
 int CDPrepare(void){
+#if !CD_HOST_TEST
+    // launchd and installer logs use pathnames, so their parent must also be
+    // root-controlled, not merely the final diagnostic directory.
+    int parent=open(CDRoot().stringByDeletingLastPathComponent.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    struct stat parentStat;if(parent<0)return 1;
+    BOOL controlled=fstat(parent,&parentStat)==0&&parentStat.st_uid==0&&!(parentStat.st_mode&0022);close(parent);if(!controlled)return 1;
+#endif
     NSString *root=CDRoot();if(mkdir(root.fileSystemRepresentation,0750)&&errno!=EEXIST)return 1;
     int directory=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(directory<0)return 1;
     struct stat st;if(fstat(directory,&st)||st.st_uid!=getuid()||(st.st_mode&0022)){close(directory);return 1;}
@@ -114,14 +126,13 @@ static void RunSuite(int fd,NSString *name) {@autoreleasepool{
     NSString *manifestPath=@"/var/jb/usr/share/cardash-diagnostics/manifest.json";
     int manifestFD=open(manifestPath.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     if(manifestFD>=0){char b[16384];ssize_t n=read(manifestFD,b,sizeof(b));close(manifestFD);if(n>0){id value=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:b length:n] options:0 error:NULL];if([value isKindOfClass:NSDictionary.class])log.put(@"installed_payload_manifest",value,true);}}
-    NSString *install=[CDRoot() stringByAppendingPathComponent:@"installation.log"];
-    int installFD=open(install.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
+    int installFD=openat(runtimeDirectory,"installation.log",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     if(installFD>=0){char b[32768];ssize_t n=read(installFD,b,sizeof(b));close(installFD);if(n>0)log.put(@"installation_log",@{@"text":[[NSString alloc] initWithBytes:b length:n encoding:NSUTF8StringEncoding]?:@"<unreadable encoding>"});}
     Child system;NSString *logTool=nil;
 #if !CD_HOST_TEST
     for(NSString *path in @[@"/usr/bin/log",@"/var/jb/usr/bin/log"])if(access(path.fileSystemRepresentation,X_OK)==0){logTool=path;break;}
 #endif
-    if(logTool)system=Spawn(logTool,@[@"stream",@"--style",@"ndjson",@"--level",@"debug",@"--predicate",@"process == 'carkitd' OR process == 'accessoryd' OR process == 'CarPlay' OR subsystem CONTAINS[c] 'CarPlay' OR subsystem CONTAINS[c] 'CarKit'"]);
+    if(logTool)system=Spawn(SelfPath(),@[@"--log-worker"]);
     log.put(@"system_log_collector",@{@"started":@(system.pid>0),@"reason":system.pid>0?@"bounded process-filtered stream":@"log utility unavailable; native output and ASL fallback will still be recorded"},true);
     NSArray *profiles=@[@"inventory",@"displays",@"receiver",@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"displays",@"system-log-fallback",@"inventory"];
 #if CD_HOST_TEST
@@ -161,9 +172,9 @@ static NSDictionary *Command(NSString *cmd){
     if([cmd isEqual:@"CANCEL"]){cancelled=true;return Status();}
     if(![cmd isEqual:@"RUN"])return @{@"error":@"unknown command"};
     @synchronized(stateLock){if(running)return Status();cancelled=false;lastError=@"";
+        if(!RuntimePathStillMatches()){lastError=@"Diagnostic directory changed; request withheld";return Status();}
         reportName=[NSString stringWithFormat:@"report-%.0f-%@.log",[[NSDate date] timeIntervalSince1970]*1000,NSUUID.UUID.UUIDString];
-        NSString *path=[CDRoot() stringByAppendingPathComponent:reportName];
-        int fd=open(path.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0640);
+        int fd=openat(runtimeDirectory,reportName.fileSystemRepresentation,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0640);
         if(fd<0){lastError=[NSString stringWithFormat:@"Cannot create report (errno %d)",errno];return Status();}
 #if !CD_HOST_TEST
         if(fchown(fd,0,501)){close(fd);lastError=@"Cannot set report ownership";return Status();}
@@ -178,16 +189,17 @@ static BOOL PeerAllowed(int socketFD){
 #else
     if(uid!=0&&uid!=501)return NO;
     pid_t pid=0;socklen_t size=sizeof(pid);if(getsockopt(socketFD,SOL_LOCAL,LOCAL_PEERPID,&pid,&size))return NO;
-    char actual[4096]={0},expected[PATH_MAX]={0};if(proc_pidpath(pid,actual,sizeof(actual))<=0)return NO;
+    char actual[4096]={0},canonical[PATH_MAX]={0},expected[PATH_MAX]={0};if(proc_pidpath(pid,actual,sizeof(actual))<=0)return NO;
     NSString *path=uid==0?CD_HELPER:CD_APP;
-    return realpath(path.fileSystemRepresentation,expected)&&strcmp(actual,expected)==0;
+    return realpath(actual,canonical)&&realpath(path.fileSystemRepresentation,expected)&&strcmp(canonical,expected)==0;
 #endif
 }
 int CDDaemon(BOOL hostMode){@autoreleasepool{
     stateLock=[NSObject new];signal(SIGPIPE,SIG_IGN);signal(SIGTERM,Terminate);signal(SIGINT,Terminate);
-    struct stat rootStat;NSString *root=CDRoot();
-    if(lstat(root.fileSystemRepresentation,&rootStat)||!S_ISDIR(rootStat.st_mode)||rootStat.st_uid!=getuid()||(rootStat.st_mode&0022)){fprintf(stderr,"Unsafe or unavailable diagnostic directory\n");return 1;}
-    int lock=open([[root stringByAppendingPathComponent:@"helper.lock"] fileSystemRepresentation],O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0600);
+    struct stat rootStat;NSString *root=CDRoot();runtimeDirectory=open(root.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(runtimeDirectory<0||fstat(runtimeDirectory,&rootStat)||rootStat.st_uid!=getuid()||(rootStat.st_mode&0022)){fprintf(stderr,"Unsafe or unavailable diagnostic directory\n");return 1;}
+    int lock=openat(runtimeDirectory,"helper.lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK,0600);
+    struct stat lockStat;if(lock>=0&&(fstat(lock,&lockStat)||!S_ISREG(lockStat.st_mode)||lockStat.st_nlink!=1||lockStat.st_uid!=getuid())){close(lock);return 1;}
     if(lock<0||flock(lock,LOCK_EX|LOCK_NB)){if(lock>=0)close(lock);return 1;}
     int listener=-1;
     if(hostMode){
@@ -205,7 +217,8 @@ int CDDaemon(BOOL hostMode){@autoreleasepool{
             int client=accept(listener,NULL,NULL);if(client<0)continue;fcntl(client,F_SETFD,FD_CLOEXEC);
             struct timeval timeout={0,300000};setsockopt(client,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(client,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
             if(PeerAllowed(client)){
-                char buffer[65]={0};size_t used=0;while(used<64){ssize_t n=read(client,buffer+used,64-used);if(n<=0)break;used+=n;if(memchr(buffer,'\n',used))break;}
+                char buffer[65]={0};size_t used=0;double commandDeadline=CDClock()+.3;
+                while(used<64){int remaining=(int)((commandDeadline-CDClock())*1000);if(remaining<=0)break;struct pollfd input={client,POLLIN,0};int ready=poll(&input,1,remaining);if(ready<0&&errno==EINTR)continue;if(ready<=0)break;ssize_t n=read(client,buffer+used,64-used);if(n<=0)break;used+=n;if(memchr(buffer,'\n',used))break;}
                 char *newline=(char *)memchr(buffer,'\n',used);NSDictionary *reply;
                 if(!newline)reply=@{@"error":@"incomplete command"};else{*newline=0;NSString *command=@(buffer);reply=Command(command);}
                 CDWrite(client,CDJSON(reply));last=CDClock();
@@ -214,5 +227,5 @@ int CDDaemon(BOOL hostMode){@autoreleasepool{
         @synchronized(stateLock){if(!running&&CDClock()-last>30)break;}
     }}
     cancelled=true;for(;;){BOOL busy;@synchronized(stateLock){busy=running;}if(!busy)break;usleep(10000);}
-    close(listener);close(lock);return 0;
+    close(listener);close(lock);close(runtimeDirectory);runtimeDirectory=-1;return 0;
 }}

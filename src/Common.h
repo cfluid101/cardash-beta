@@ -2,7 +2,7 @@
 #include <sys/types.h>
 
 #define CD_VERSION @"0.1.0"
-#define CD_ROOT @"/var/mobile/Library/CarDashDiagnostics"
+#define CD_ROOT @"/var/jb/var/lib/cardash-diagnostics"
 #define CD_APP @"/var/jb/Applications/CarDashDiagnostics.app/CarDashDiagnostics"
 #define CD_HELPER @"/var/jb/usr/libexec/cardash-diagnostics"
 #define CD_JOB @"com.cfluid.cardash.diagnostics"
@@ -19,3 +19,5 @@ NSDictionary *CDCommand(NSString *command);
 int CDWorker(NSString *profile);
 int CDDaemon(BOOL hostMode);
 int CDPrepare(void);
+BOOL CDInstallWorkerGuard(unsigned seconds);
+int CDLogWorker(void);

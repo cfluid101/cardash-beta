@@ -66,5 +66,78 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='cddiag-',dir='/tmp') as d:
             p=subprocess.run([str(BIN),'--prepare'],env=dict(os.environ,CD_DIAG_ROOT=d),capture_output=True)
             self.assertEqual(p.returncode,0,p.stderr.decode());self.assertEqual({x.name for x in Path(d).iterdir()},{'installation.log','helper-bootstrap.log'})
+    def test_replaced_directory_cannot_redirect_privileged_report_write(self):
+        root,_=self.start();parent=root.parent;kept=parent/(root.name+'-kept');elsewhere=parent/(root.name+'-unrelated');elsewhere.mkdir();root.rename(kept);root.symlink_to(elsewhere,target_is_directory=True)
+        import shutil
+        self.addCleanup(lambda:shutil.rmtree(kept,ignore_errors=True));self.addCleanup(lambda:shutil.rmtree(elsewhere,ignore_errors=True));self.addCleanup(root.unlink)
+        reply=self.command(kept,'RUN')
+        self.assertFalse(reply.get('running'));self.assertTrue(reply.get('error'));self.assertEqual(list(elsewhere.iterdir()),[])
+    def test_helper_death_cannot_leave_an_orphan_worker(self):
+        root,helper=self.start('hang');start=self.command(root,'RUN');pid=None
+        for _ in range(80):
+            path=root/start['report']
+            if path.exists():
+                rows=[json.loads(x) for x in path.read_text().splitlines()]
+                found=[x['pid'] for x in rows if x['event']=='worker_start']
+                if found:pid=found[0];break
+            time.sleep(.02)
+        self.assertIsNotNone(pid);helper.kill();helper.communicate(timeout=3)
+        try:
+            for _ in range(100):
+                try:os.kill(pid,0)
+                except ProcessLookupError:break
+                time.sleep(.02)
+            else:self.fail('orphan worker survived helper death')
+        finally:
+            try:os.killpg(pid,9)
+            except ProcessLookupError:pass
+    def test_helper_death_also_terminates_owned_descendants(self):
+        root,helper=self.start('descendant');start=self.command(root,'RUN');pids=[]
+        try:
+            for _ in range(100):
+                path=root/start['report']
+                if path.exists():
+                    rows=[json.loads(x) for x in path.read_text().splitlines()]
+                    leaders=[x['pid'] for x in rows if x['event']=='worker_start']
+                    for x in rows:
+                        if x['event']=='captured_output':
+                            try:inner=json.loads(x['text'])
+                            except ValueError:continue
+                            if inner.get('event')=='owned_descendant':pids=[leaders[0],inner['pid']]
+                    if pids:break
+                time.sleep(.01)
+            self.assertEqual(len(pids),2);helper.kill();helper.communicate(timeout=3)
+            for pid in pids:
+                for _ in range(100):
+                    try:os.kill(pid,0)
+                    except ProcessLookupError:break
+                    time.sleep(.02)
+                else:self.fail('owned descendant survived helper death')
+        finally:
+            if pids:
+                try:os.killpg(pids[0],9)
+                except ProcessLookupError:pass
+    def test_cancellation_during_baseline_prevents_start_call(self):
+        root,_=self.start('cancel-baseline');start=self.command(root,'RUN')
+        for _ in range(100):
+            path=root/start['report']
+            if path.exists() and 'baseline_enter' in path.read_text():break
+            time.sleep(.01)
+        self.command(root,'CANCEL');rows=self.finish(root);text=json.dumps(rows)
+        self.assertIn('baseline_enter',text);self.assertNotIn('start_call_enter',text);self.assertIn('request_withheld_cancelled',text)
+    def test_partial_command_has_total_deadline_even_with_trickled_bytes(self):
+        root,_=self.start()
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(.04);s.connect(str(root/'control.sock'));start=time.monotonic();data=b''
+            while time.monotonic()-start<.75:
+                try:s.sendall(b'S')
+                except BrokenPipeError:pass # The server may have closed after queuing its reply; drain it.
+                try:
+                    data+=s.recv(1024)
+                    if b'\n' in data:break
+                except socket.timeout:pass
+                time.sleep(.08)
+            self.assertIn(b'incomplete command',data,'trickled input extended the command deadline')
+            self.assertLess(time.monotonic()-start,.65)
 
 if __name__=='__main__':unittest.main()

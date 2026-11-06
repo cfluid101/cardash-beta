@@ -11,6 +11,9 @@
 #include <atomic>
 #include <memory>
 #include <vector>
+#include <pthread.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include "PublicKey.h"
 
 @interface NSObject (CDPrivateCarKit)
@@ -36,8 +39,29 @@
 @end
 static volatile sig_atomic_t stopWorker=0;
 static void Stop(int sig){(void)sig;stopWorker=1;}
-#if !CD_HOST_TEST
 static void Pump(double seconds){double end=CDClock()+seconds;while(!stopWorker&&CDClock()<end){CFRunLoopRunInMode(kCFRunLoopDefaultMode,.03,false);usleep(10000);}}
+static BOOL StartGate(void){if(stopWorker){CDEmit(@"request_withheld_cancelled",@{});return NO;}return YES;}
+static volatile sig_atomic_t ownedGroup=0;
+static void GuardEnd(int signal){(void)signal;if(ownedGroup>1)kill(-ownedGroup,SIGKILL);_exit(124);}
+struct Guard {pid_t parent;double deadline;};
+static void *WatchParent(void *raw){Guard *guard=(Guard *)raw;for(;;){if(getppid()!=guard->parent||CDClock()>guard->deadline)GuardEnd(0);usleep(50000);}return NULL;}
+BOOL CDInstallWorkerGuard(unsigned seconds){
+    if(getpgrp()!=getpid()||getppid()<=1)return NO;
+    ownedGroup=getpid();signal(SIGALRM,GuardEnd);sigset_t signals;sigemptyset(&signals);sigaddset(&signals,SIGALRM);pthread_sigmask(SIG_UNBLOCK,&signals,NULL);alarm(seconds);
+    Guard *guard=new Guard{getppid(),CDClock()+seconds};pthread_t thread;int result=pthread_create(&thread,NULL,WatchParent,guard);
+    if(result){delete guard;return NO;}pthread_detach(thread);return YES;
+}
+int CDLogWorker(void){
+    signal(SIGTERM,Stop);signal(SIGINT,Stop);signal(SIGPIPE,SIG_IGN);
+    const char *tool=NULL;for(const char *path:{"/usr/bin/log","/var/jb/usr/bin/log"})if(access(path,X_OK)==0){tool=path;break;}if(!tool)return 2;
+    const char *args[]={tool,"stream","--style","ndjson","--level","debug","--predicate","process == 'carkitd' OR process == 'accessoryd' OR process == 'CarPlay' OR subsystem CONTAINS[c] 'CarPlay' OR subsystem CONTAINS[c] 'CarKit'",NULL};
+    extern char **environ;pid_t child;
+    // The collector inherits this worker's private group. The independent
+    // guardian kills the whole group on parent loss or hard deadline.
+    int error=posix_spawn(&child,tool,NULL,NULL,(char *const *)args,environ);if(error)return 2;
+    for(;;){int status=0;pid_t got=waitpid(child,&status,WNOHANG);if(got==child)return WIFEXITED(status)?WEXITSTATUS(status):1;if(got<0&&errno!=EINTR)return 1;if(stopWorker)GuardEnd(0);usleep(10000);}
+}
+#if !CD_HOST_TEST
 static BOOL Match(Class cls,NSString *name,const char *ret,NSArray *args,BOOL classMethod=NO){return CDMethodMatches(cls,name,ret,args,classMethod,YES);}
 static NSArray *HostMethods(void){return @[
     @[@"initWithHostProperties:",@"@",@[@"@"]],@[@"setWiredCarPlaySimulator:",@"v",@[@"B"]],@[@"isWiredCarPlaySimulator",@"B",@[]],
@@ -100,6 +124,7 @@ static int Attempt(NSString *profile){
     if(!valid){CDEmit(@"request_withheld",@{@"reason":@"ABI or method owner mismatch"});return 21;}
     id observer=Observer();if(!observer){CDEmit(@"request_withheld",@{@"reason":@"Cannot establish pre-existing session state"});return 21;}
     Pump(1);NSDictionary *before=Session(observer);CDEmit(@"session_before",before);
+    if(!StartGate())return 0;
     if([before[@"present"] boolValue]){CDEmit(@"request_withheld",@{@"reason":@"An existing CarPlay session must be disconnected before this diagnostic"});return 20;}
     int listener=socket(AF_INET6,SOCK_STREAM,0);if(listener<0)return 1;
     fcntl(listener,F_SETFL,O_NONBLOCK);fcntl(listener,F_SETFD,FD_CLOEXEC);int yes=1;setsockopt(listener,IPPROTO_IPV6,IPV6_V6ONLY,&yes,sizeof(yes));
@@ -116,6 +141,7 @@ static int Attempt(NSString *profile){
         NSData *publicKey=keyed?[NSData dataWithBytes:CDPublicKey length:32]:nil;[host setPublicKey:publicKey];
         BOOL roundtrip=[host isWiredCarPlaySimulator]==simulator&&[host port]==port&&[[host wiredIPv6Addresses] isEqual:@[@"::1"]]&&[[host wirelessIPv6Addresses] count]==0&&[[host sourceVersion] isEqual:@"509.0"]&&(keyed?[[host publicKey] isEqual:publicKey]:[host publicKey]==nil);
         CDEmit(@"host_roundtrip",@{@"matches":@(roundtrip)});if(!roundtrip)@throw [NSException exceptionWithName:@"HostMismatch" reason:@"Host setters did not round trip" userInfo:nil];
+        if(!StartGate())@throw [NSException exceptionWithName:@"Cancelled" reason:@"Cancelled before native start" userInfo:nil];
         CDEmit(@"start_call_enter",@{@"profile":profile});issued=YES;
         [client startSessionWithHost:host completion:^{callback->store(true);}];
         CDEmit(@"start_call_returned",@{});double end=CDClock()+18,lastSnapshot=0;
@@ -145,6 +171,7 @@ static int Attempt(NSString *profile){
     if(client){CDEmit(@"cancel_call_enter",@{});@try{[client cancelRequests];cleanupConfirmed=YES;CDEmit(@"cancel_call_returned",@{});}@catch(NSException *e){CDEmit(@"cancel_exception",@{@"name":e.name});}}
     for(auto &c:clients)close(c.fd);close(listener);Pump(.5);NSDictionary *after=Session(observer);CDEmit(@"session_after_cleanup",after);
     CDEmit(@"native_summary",@{@"profile":profile,@"request_issued":@(issued),@"callback_observed":@(callback->load()),@"transport_connected":@(transport),@"new_session_observed":@(newSession),@"request_cancel_returned":@(cleanupConfirmed),@"session_still_present":after[@"present"],@"live_carplay_verified":@NO,@"conclusion":CDConclusion(issued,callback->load(),transport,newSession)});
+    if(stopWorker&&!issued)return 0;
     return [after[@"present"] boolValue]?23:issued&&cleanupConfirmed?0:1;
 }
 #endif
@@ -153,7 +180,9 @@ int CDWorker(NSString *profile){@autoreleasepool{
 #if CD_HOST_TEST
     NSString *mode=@(getenv("CD_TEST_WORKER_MODE")?:"normal");CDEmit(@"host_fixture",@{@"mode":mode,@"native_session_attempted":@NO});
     if([mode isEqual:@"hang"]){while(!stopWorker)usleep(10000);return 0;}
+    if([mode isEqual:@"descendant"]){const char *args[]={"/bin/sleep","30",NULL};extern char **environ;pid_t child;if(posix_spawn(&child,args[0],NULL,NULL,(char *const *)args,environ))return 1;CDEmit(@"owned_descendant",@{@"pid":@(child)});while(!stopWorker)usleep(10000);kill(child,SIGTERM);while(waitpid(child,NULL,0)<0&&errno==EINTR){}return 0;}
     if([mode isEqual:@"crash"]){raise(SIGABRT);return 1;}
+    if([mode isEqual:@"cancel-baseline"]){CDEmit(@"baseline_enter",@{});Pump(.45);if(StartGate())CDEmit(@"start_call_enter",@{@"test_fixture":@YES});return 0;}
     if([mode isEqual:@"noisy"]){char block[8192];memset(block,'x',sizeof(block));for(int i=0;i<900&&!stopWorker;i++)write(STDOUT_FILENO,block,sizeof(block));return 0;}
     usleep(120000);CDEmit(@"host_fixture_complete",@{@"profile":profile});return 0;
 #else
