@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #include <sys/types.h>
 
-#define CD_VERSION @"0.1.1"
+#define CD_VERSION @"0.1.2"
 #define CD_ROOT @"/var/jb/var/lib/cardash-diagnostics"
 #define CD_APP @"/var/jb/Applications/CarDashDiagnostics.app/CarDashDiagnostics"
 #define CD_HELPER @"/var/jb/usr/libexec/cardash-diagnostics"

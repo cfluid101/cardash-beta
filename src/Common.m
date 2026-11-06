@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 NSString *CDRoot(void) {
 #if CD_HOST_TEST || CD_SIM_TEST
@@ -27,7 +28,11 @@ BOOL CDWrite(int fd,NSData *data) {
     while(left){ssize_t n=write(fd,bytes,left);if(n<0&&errno==EINTR)continue;if(n<=0)return NO;bytes+=n;left-=n;}return YES;
 }
 void CDEmit(NSString *event,NSDictionary *fields) {
-    NSMutableDictionary *row=[fields mutableCopy];row[@"event"]=event;row[@"monotonic_seconds"]=@(CDClock());CDWrite(STDOUT_FILENO,CDJSON(row));
+    // NSXPC invokes error handlers on private queues. Serialize whole records,
+    // including partial writes, so concurrent callbacks cannot corrupt NDJSON.
+    static pthread_mutex_t outputLock=PTHREAD_MUTEX_INITIALIZER;
+    NSMutableDictionary *row=[fields mutableCopy];row[@"event"]=event;row[@"monotonic_seconds"]=@(CDClock());NSData *record=CDJSON(row);
+    pthread_mutex_lock(&outputLock);CDWrite(STDOUT_FILENO,record);pthread_mutex_unlock(&outputLock);
 }
 BOOL CDMethodMatches(Class cls,NSString *selector,const char *ret,NSArray<NSString *> *args,BOOL classMethod,BOOL checkOwner) {
     Method m=classMethod?class_getClassMethod(cls,NSSelectorFromString(selector)):class_getInstanceMethod(cls,NSSelectorFromString(selector));
@@ -66,7 +71,7 @@ NSDictionary *CDIPCEnvironment(void) {
     typedef CFTypeRef (*TaskCreate)(CFAllocatorRef);typedef CFTypeRef (*EntitlementCopy)(CFTypeRef,CFStringRef,CFErrorRef *);
     TaskCreate create=security?(TaskCreate)dlsym(security,"SecTaskCreateFromSelf"):NULL;EntitlementCopy copy=security?(EntitlementCopy)dlsym(security,"SecTaskCopyValueForEntitlement"):NULL;
     CFTypeRef task=create&&copy?create(kCFAllocatorDefault):NULL;NSMutableDictionary *ents=[NSMutableDictionary dictionary];
-    for(NSString *key in @[@"application-identifier",@"platform-application",@"com.apple.private.security.container-required",@"com.apple.private.security.no-sandbox"]){
+    for(NSString *key in @[@"application-identifier",@"platform-application",@"com.apple.private.security.container-required",@"com.apple.private.security.no-sandbox",@"com.apple.private.carkit.sessionRequest"]){
         CFTypeRef value=task?copy(task,(__bridge CFStringRef)key,NULL):NULL;id decoded=value?CFBridgingRelease(value):nil;
         ents[key]=[decoded isKindOfClass:NSString.class]||[decoded isKindOfClass:NSNumber.class]?decoded:@"absent_or_unavailable";
     }

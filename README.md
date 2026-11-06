@@ -1,60 +1,58 @@
-# CarDash CarPlay Diagnostics 0.1.1
+# CarDash CarPlay Diagnostics 0.1.2
 
-Standalone rootless diagnostic for the recorded **iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine**. It collects one shareable log and attempts the known native CarPlay session-start API. It is not a replacement CarDash beta or a complete CarPlay receiver.
+Standalone rootless diagnostic for **iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine**. It attempts the known native session-start API and collects one shareable log. It is not a replacement CarDash beta or a complete CarPlay receiver.
 
 ## On the phone
 
-1. Fully close an older **CarPlay Diagnostics** app if it is open. Install `com.cfluid.cardash.diagnostics_0.1.1_iphoneos-arm64.deb` using your normal rootless package installer. No respring is required. Installation performs a status-only helper/socket preflight and does not start a CarPlay session attempt.
-2. Disconnect any real CarPlay receiver. Open **CarPlay Diagnostics**, keep the phone unlocked, and tap **Run diagnostics**. The suite normally takes about two minutes, with a three-minute overall budget plus bounded cleanup.
-3. Wait for **Report ready**, then tap **Share diagnostic log**. Send the single `.log` file. You can run the suite again without reinstalling; each run gets a new report.
+1. Fully close an older **CarPlay Diagnostics** app. Install `com.cfluid.cardash.diagnostics_0.1.2_iphoneos-arm64.deb` with your rootless package installer. No respring is required. Installation performs a STATUS-only helper preflight and starts no CarPlay trial.
+2. Disconnect real CarPlay receivers. Open **CarPlay Diagnostics**, keep it visible with the phone unlocked, and tap **Run diagnostics**. Allow two to three minutes; the overall budget is three minutes plus bounded cleanup.
+3. Wait for **Report ready**, then **Share diagnostic log** and send the single `.log` file. If startup fails, Share still exports the app error and supporting logs.
 
-Cancel stops the current test and still produces a report. If the helper cannot start, Share exports the app error plus the available installation/helper logs. If an ABI check, process, deadline, or cleanup fails, remaining active stages are withheld and the reason is recorded. A report can therefore be complete as a diagnostic while its native attempt did not succeed.
-
-The app disables automatic screen sleep only while a test is running in the foreground. Locking or backgrounding does not grant additional runtime privileges; keep it visible for the initial trial.
+Cancel stops the trial and retains its report. Every run gets a new report; no reinstall is needed to repeat it. The app prevents automatic screen sleep only while testing in the foreground. Target, ABI, existing-session, failure and cleanup guards can withhold later stages and record why.
 
 ## What runs
 
-- App IPC environment (sandbox state, selected signed entitlements, socket/directory ownership and modes), installation status-only preflight, device/build and process snapshots, build manifest, CarKit method encodings and implementation owners.
-- CarKit/session inventory, display inventory, and an isolated AirPlayReceiver class inventory.
-- Up to four serial native attempts: root + simulator + public test key; root + simulator without public key; root + non-simulator + public test key; mobile identity + simulator + public test key.
-- Each attempt creates its own IPv6-loopback listener on an available port, validates host-property readback, calls `startSessionWithHost:completion:` once, observes for 18 seconds, calls `cancelRequests`, closes its sockets, and checks session state afterward.
-- Filtered unified service logs when the phone supplies a usable `log` utility; bounded ASL fallback otherwise. Missing/unavailable logs are explicitly recorded rather than treated as absence of errors.
-- Per-worker deadlines, independent parent-death guards, owned-process-group cleanup, crash/timeout/cancel status, output limits and a terminal `run_end` record on managed completion. An abruptly killed helper can leave a partial report; share it too.
+- Device/build, effective signed entitlements, app/helper IPC facts, process snapshots, payload manifest, CarKit method encodings, display/session inventory, configured CarKit launchd service owners and isolated AirPlayReceiver class inventory.
+- The original four serial profiles: root/simulator/public test key, root/simulator/no key, root/standard/public test key, and mobile/simulator/public test key.
+- A fifth controlled root/simulator/key profile uses a separate executable with identical code and exactly one additional signed entitlement: `com.apple.private.carkit.sessionRequest`. Its effective entitlement must read true. The sixth profile repeats the unmodified root/simulator/key baseline. This comparison tests a hypothesis; earlier attempts can affect service state, so differences alone do not prove causation.
+- Each attempt owns an IPv6-loopback listener on an ephemeral port, validates host-property readback, invokes `startSessionWithHost:completion:` once, observes for 18 seconds, calls `cancelRequests`, closes its sockets and checks session state afterward.
+- Worker-local instrumentation observes only the exact owned CarKit client and its NSXPC connections. It records connection/protocol metadata, bounded errors and underlying causes, interruption/invalidation events and coverage while preserving original callbacks. It sends no additional remote request. Priming the getter may create a lazy connection; errors before registration may be missed.
+- Completion success/error is interpreted only when method checks and the exact retained daemon SHA/UUID, loaded CarKit UUID and implementation owners match recorded compatibility evidence. Unknown identities retain occurrence-only callbacks. The log records the identity and evidence basis; the exact iOS 16.6 CarKit implementation has not been recovered offline.
+- Filtered system logs if a usable `log` utility exists, with bounded ASL fallback. Client-side XPC errors are recorded even when these daemon log facilities are unavailable. Unavailable logs never mean no error occurred.
 
-Workers are separate processes. The helper is on-demand, never kept alive or run at boot, and its control endpoint is a local Unix socket restricted to the installed app/root CLI. There is no HTTP listener, SSH requirement, injection dylib, global hook, Wi-Fi/Bluetooth setting change, or explicit pairing-record edit.
+Independent worker deadlines and parent-death guards terminate owned process groups. Reports preserve crash/timeout/cancel status, output truncation and a terminal record on managed completion; an abruptly killed helper can leave a partial report worth sharing.
 
-## Interpreting the result
+## Interpreting results
 
-Read `native_summary` inside `captured_output.text`, along with the corresponding system messages and final `run_end`. These are distinct observations:
-
-| Observation | Meaning |
+| Record | Meaning |
 |---|---|
-| `request_withheld` | A target/ABI/ownership/existing-session guard prevented the call. |
-| `start_call_enter` / `start_call_returned` | The known native request was invoked / returned. |
-| `callback_observed` | The completion block ran. Its undocumented arguments are not interpreted. |
-| `loopback_connected` / `receiver_request` | A loopback client reached the owned listener; the method/path/protocol is recorded. Correlate service logs to identify the caller. |
-| `new_session_observed` | CarKit reported a session after a baseline with none. This is not proof of ownership, authentication or a working display. |
-| `request_cancel_returned` | The client cancellation call returned; post-cleanup session presence is recorded separately. |
-| `live_carplay_verified: false` | This diagnostic has not verified a live authenticated video/input session. |
+| `request_withheld` | A guard prevented a request; inspect its reason. |
+| `start_call_enter` / `start_call_returned` | The native request was invoked / returned. |
+| `completion_identity` / `native_completion` | Identity gate and callback occurrence; typed success/error only if permitted. |
+| `xpc_proxy_error` | An NSError from the owned connection's request path, with bounded causes. This is client-side evidence, not a daemon log. |
+| `xpc_connection_interrupted` / `xpc_connection_invalidated` | Connection lifecycle event. `cleanup: true` means cancellation has begun; invalidation alone does not identify its cause. |
+| `xpc_trace_summary` | Instrumentation coverage and counts. Zero recorded errors do not prove success. |
+| `loopback_connected` / `receiver_request` | A client reached the listener. Correlate other evidence to identify it. |
+| `native_success` / `new_session_observed` | Native callback/session observations, distinct from authentication or display verification. |
+| `session_after_cleanup` | Whether CarKit still reports a session after cancellation. |
+| `live_carplay_verified: false` | No live authenticated video/input session has been verified. |
 
-**Authentication is not implemented.** The public key is a fresh public test value, not an Apple-trusted accessory identity; its private key is discarded during the build. The listener answers OPTIONS and records subsequent requests, returning an explicit diagnostic-only 501 for other methods. It cannot complete MFi/pairing/video negotiation. If transport arrives, that identifies the next implementation boundary. If it does not, the collected evidence helps investigate the earlier startup boundary. Neither outcome alone proves a full phone-only CarPlay receiver possible or impossible.
+**Authentication is not implemented.** The public test key is freshly generated, not an Apple-trusted accessory identity; its private key is discarded. The receiver answers OPTIONS, then returns explicit diagnostic-only 501 responses to other methods. Transport progress identifies the next implementation boundary; it does not prove working CarPlay. No transport alone cannot identify MFi/crypto as the failure.
 
-## Isolation and data
+## Isolation
 
-Package `com.cfluid.cardash.diagnostics` uses only its own app, helper, launch job and `/var/jb/var/lib/cardash-diagnostics/` report directory. Original CarDash and V2 files/preferences are not package targets. Reports survive uninstall. Runtime output is capped; truncation is marked, and terminal worker/cleanup records remain available. Logs can include CarKit service messages; review them before sharing. Nothing is uploaded automatically.
+Package `com.cfluid.cardash.diagnostics` owns only its app, two helper executables, one on-demand launch job and `/var/jb/var/lib/cardash-diagnostics/`. Original CarDash and V2 paths/preferences are not package targets. Reports survive uninstall. There is no HTTP control listener, SSH requirement, injection dylib, system-wide hook, network-setting change or explicit pairing-record edit. The comparison worker has no persistent service. The control socket is restricted to the installed app/root CLI. Logs are bounded and never uploaded automatically; review before sharing.
 
-Root CLI, if needed: `/var/jb/usr/libexec/cardash-diagnostics --run`, `--status`, or `--cancel`. Normal use is through the app.
+Root CLI: `/var/jb/usr/libexec/cardash-diagnostics --run`, `--status`, or `--cancel`.
 
-## Local validation and limits
+## Build and validation
 
-Build: `python3 build.py`. Tests: `python3 -m unittest discover -s tests -p 'test_*.py'`, plus `build/host/gate-tests`. Simulator build: `python3 build.py --simulator`; the optional smoke script uses the separately owned research simulator and a synthetic host worker. Xcode, macOS codesign and Node (build-time generation of a public test key) are required; no phone is contacted by the build.
+Build: `python3 build.py`. Tests: `python3 -m unittest discover -s tests -p 'test_*.py'`. The build also runs ABI/ownership checks and malformed-image/identity-gate checks. Simulator build: `python3 build.py --simulator`; `simulator-smoke.py` uses the separately owned research simulator with synthetic host workers. Builds never contact a phone.
 
-The rootless archive is independently extracted and checked for ownership, paths, signatures, manifests and scripts. Local process tests cover a real OS-enforced socket denial, missing sockets, a status-only installer preflight, repeat runs, concurrency, cancellation before a native request, hangs, crashes, orphaned workers and descendants, output bounds, trickled control messages, and installation path protection. Simulator checks exercise Run, report generation, Share-file export and a failed rerun that must export fresh supporting logs instead of the old report. REA inspects the actual arm64 binaries' platform, minimum OS and dependencies.
+Local tests exercise real NSXPC errors, callback preservation, synchronous/asynchronous semantics, successful replies, untracked-client isolation, replacement connections, concurrent JSON emission, bounded error data, package signatures/complete payload hashes, comparison entitlements/identical code, helper IPC, installation, cancellation, crashes, deadlines and process cleanup. Simulator checks exercise Run/Share and failure exports, not iOS private-service authorization.
 
-These checks provide local build/package confidence. **The exact device's signature trust, launchd registration, peer authorization, private API behavior and native session result still require its first installation/test.** No 100% runtime guarantee is claimed. The report is designed to expose those failures in the same install rather than require a different DEB for each test stage.
+**This version still needs a physical-device trial.** Local tests cannot guarantee jailbreak signature trust, private-framework behavior, error availability or a successful native session. See [VALIDATION.md](VALIDATION.md) and [TRACE-FINDINGS.md](TRACE-FINDINGS.md).
 
-## 0.1.1 connection correction
+## Evidence motivating this release
 
-The supplied 0.1.0 device log showed a registered launch job but `connect()` failed with `EPERM` before a CarPlay attempt. The diagnostic app had explicitly requested container confinement while also requesting no sandbox. The device build now signs `container-required=false`; the simulator retains its own data container for UI tests. Connection failures report the actual sandbox/entitlement/socket facts, and installation records a root STATUS round trip to separate helper activation from app policy failures. See [IPC-FIX.md](IPC-FIX.md) for evidence and remaining uncertainty.
-
-This correction is locally verified but still needs a phone trial. An EPERM result alone does not prove which sandbox rule or policy caused it; the additional facts avoid presenting that inference as a confirmed on-device fix.
+The supplied 0.1.0 report failed app/helper IPC with EPERM. Version 0.1.1 corrected device app confinement; its uploaded report confirms helper access and all ten stages, including four requests, but no callback, listener connection or new session. Daemon logs were unavailable. Version 0.1.2 captures the missing client-boundary evidence and tests a narrowly supported entitlement hypothesis. It does not claim the current failure is MFi. Historical IPC analysis remains in [IPC-FIX.md](IPC-FIX.md).

@@ -1,22 +1,25 @@
-# Diagnostic 0.1.1 validation
+# Diagnostic 0.1.2 validation
 
-This package targets the recorded iPhone 8 Plus (`iPhone10,2`) on iOS 16.6 (`20G75`) with Dopamine rootless. It has not been installed or tested on a physical phone during this development pass.
+Target: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine rootless. The phone is disconnected. This version has not been installed or tested on the physical phone.
 
-## Completed locally
+## Local checks
 
-- 19 automated Python integration/package tests: repeat runs and one-controller behavior; cancellation; hangs; crashes; bounded noisy output; hardlink rejection; installation preparation; directory replacement; parent-death cleanup of workers and descendants; cancellation before native startup; total timeout for incomplete control input; a real sandbox-enforced socket denial; missing-socket diagnosis; signed app confinement settings; status-only installer preflight; rootless payload isolation; manifest/signature checks; shell/package metadata.
-- 11 ABI, implementation-owner and result-classification checks.
-- UIKit simulator Run and Share handlers produce one combined diagnostic log with a terminal record. A failed second run exports current supporting logs and excludes the previous worker report. These use synthetic workers, not native iOS CarPlay.
-- Warnings-as-errors builds and strict ad-hoc signature checks for ARM64 iOS 16.6 targets. Package archives independently extracted with macOS ar/tar. Host/simulator-only switches are absent from the device binaries.
-- The 0.1.0 base received independent source review; four Important findings were fixed with failing-then-passing regressions. No unresolved Critical or Important findings from that review. The 0.1.1 IPC correction adds four regressions and was checked locally; it has not received a fresh independent reviewer pass.
-- Original project (585 entries), original DEB, update-product baseline (203 files), and beta.25 release DEB hashes preserved.
+- 35 automated integration/package tests passed. They exercise real NSXPC errors and successful replies; preservation of original error/interruption/invalidation handlers; asynchronous versus synchronous proxy semantics; plain and one-way requests; unrelated-client isolation; replacement connections and concurrent errors; bounded nested NSError/Unicode data; class/implementation-owner guards; partial instrumentation failure/retry; bounded inherited protocol metadata; and concurrent handler setup/lifecycle observation.
+- A parallel-writer regression reproduces corrupt NDJSON without serialization and passes after the output mutex fix. A handler-getter failure regression reproduces falsely complete coverage before the observer fix. Package regressions exposed and corrected an unhashed README and a differing codesign identifier in the comparison worker.
+- Existing integration tests cover repeat runs, single-controller behavior, cancellation, hangs, crashes, output bounds, hardlinks, directory replacement, parent-death cleanup of workers/descendants, pre-request cancellation, slow control clients, real sandbox socket denial, missing sockets, signed app confinement and STATUS-only installation preflight.
+- Eleven ABI/ownership/result-classification checks plus bounded Mach-O parsing/identity-gate tests. The parser also decoded the actual retained caller UUID and verified its SHA-256.
+- ARM64 iOS 16.6 builds use warnings as errors and strict ad-hoc signature verification. The app and both helper executables are checked. The comparison executable has identical `__TEXT` sections and signing Identifier, with exactly the additional sessionRequest entitlement. It has no independent launch job.
+- Rootless archive inspection checks paths, permissions, signatures, scripts and integrity hashes for every payload file except the manifest itself. Host/simulator-only control strings are absent from device binaries.
+- UIKit simulator Run/Share creates a combined report with a terminal record. A failed second run exports current supporting logs and excludes the old report. These checks use synthetic workers, not native CarPlay. Only the separately owned research simulator was booted; it was shut down afterward.
+- Independent source reviews covered the observer and its integration, callback identity gates, stage budgets, isolated entitlement experiment and retained-binary conclusions. The reported handler-coverage issue was corrected and regression-tested. Objective-C decompiler limitations remain explicit in TRACE-FINDINGS.md.
+- Original project: 585 baseline entries unchanged. Original DEB unchanged. Update-product baseline: 203 files unchanged. Existing beta.25 release DEB SHA-256 unchanged (`72cc51617d9544e0f36b4a369c5f65819e60c5717a62c551e235cba99f548161`).
 
-The release manifest records the exact source commit and final payload/DEB hashes. REA evidence and a release-validation report accompany the final local artifacts. Rebuilding can change signatures/archive bytes; verify the downloaded file against its matching SHA-256 file.
+The final release manifest records the committed source revision and exact payload/DEB hashes. The published DEB is downloaded again and compared to its local digest. Rebuilding can change signing/archive bytes; always use the checksum supplied with the corresponding download.
 
-## First device trial
+## Required device trial
 
-Fully close an older diagnostic app before upgrading, disconnect real CarPlay receivers, open CarPlay Diagnostics, and tap Run diagnostics while unlocked. Wait for completion (normally around two minutes; three-minute budget plus bounded cleanup), then Share diagnostic log. If helper startup fails, use Share anyway. Repeat runs use new report files without reinstalling.
+Fully close an older diagnostic app, install 0.1.2, disconnect real CarPlay receivers, then run CarPlay Diagnostics while unlocked. Allow two to three minutes and share the single log. No USB connection, SSH setup, respring or reinstallation between repeat trials is required by the diagnostic itself.
 
-The phone must establish: signature trust, app registration/read access, on-demand helper launch, peer authorization, target/ABI compatibility, four request-profile outcomes where permitted, system-log availability, and cleanup. Existing sessions or failed checks withhold further active calls and explain why in the same report.
+The phone must establish signature trust and activation of the new comparison executable, current framework identities, observer coverage, actual service/protocol/error records, effective comparison entitlement, six profile outcomes where permitted, and cleanup. A failed ABI/identity gate is reported; typed callback arguments remain disabled for an unknown image pair. An existing session or stage/cleanup failure withholds later attempts.
 
-This is a session-start diagnostic. It does not implement accessory authentication, a full CarPlay receiver, video decoding, native app switching, or Tesla display output. Callback/loopback/session observations are not a claim of working CarPlay. Local testing cannot guarantee a successful first device run or eliminate the possibility of a device-specific correction.
+This is a session-start diagnostic. Authentication, a complete receiver, video decoding, native app switching and Tesla output are not implemented. A recorded callback, socket or session is not a verified working display. Missing transport cannot by itself identify MFi as the blocker. Local testing does not guarantee the first physical-device result or rule out a device-specific correction.

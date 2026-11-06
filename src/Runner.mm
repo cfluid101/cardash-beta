@@ -116,7 +116,7 @@ static NSString *SelfPath(void){char p[4096];uint32_t n=sizeof(p);if(_NSGetExecu
 static NSArray *ServicePIDs(void){
     pid_t pids[2048];int count=proc_listallpids(pids,sizeof(pids));NSMutableArray *rows=[NSMutableArray array];
     for(int i=0;i<MIN(count,2048);i++){char path[4096]={0};if(proc_pidpath(pids[i],path,sizeof(path))<=0)continue;NSString *name=[@(path) lastPathComponent];
-        if([@[@"carkitd",@"accessoryd",@"SpringBoard",@"backboardd"] containsObject:name])[rows addObject:@{@"name":name,@"pid":@(pids[i])}];}
+        if([@[@"carkitd",@"accessoryd",@"SpringBoard",@"backboardd",@"mediaserverd",@"audiomxd",@"airplayd"] containsObject:name])[rows addObject:@{@"name":name,@"pid":@(pids[i])}];}
     return rows;
 }
 static void RunSuite(int fd,NSString *name) {@autoreleasepool{
@@ -134,14 +134,17 @@ static void RunSuite(int fd,NSString *name) {@autoreleasepool{
 #endif
     if(logTool)system=Spawn(SelfPath(),@[@"--log-worker"]);
     log.put(@"system_log_collector",@{@"started":@(system.pid>0),@"reason":system.pid>0?@"bounded process-filtered stream":@"log utility unavailable; native output and ASL fallback will still be recorded"},true);
-    NSArray *profiles=@[@"inventory",@"displays",@"receiver",@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"displays",@"system-log-fallback",@"inventory"];
+    NSArray *profiles=@[@"inventory",@"displays",@"receiver",@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"root-simulator-entitlement-key",@"root-simulator-baseline-after-key",@"displays",@"system-log-fallback",@"inventory"];
 #if CD_HOST_TEST
     profiles=@[@"host-fixture",@"host-fixture-2"];
 #endif
     NSUInteger completed=0;BOOL failed=NO;
     for(NSString *profile in profiles){
         if(cancelled||CDClock()-started>180){log.put(@"remaining_stages_withheld",@{@"reason":cancelled?@"cancelled":@"suite deadline"},true);break;}
-        Child child=Spawn(SelfPath(),@[@"--worker",profile]);
+        BOOL entitlementTrial=[profile isEqual:@"root-simulator-entitlement-key"];
+        NSString *program=entitlementTrial?@"/var/jb/usr/libexec/cardash-diagnostics-session-request":SelfPath();
+        if(entitlementTrial)log.put(@"entitlement_comparison",@{@"profile":profile,@"program":program,@"hypothesis_only":@YES,@"additional_entitlement":@"com.apple.private.carkit.sessionRequest",@"baseline_repeated_afterward":@YES},true);
+        Child child=Spawn(program,@[@"--worker",profile]);
         if(child.pid<0){log.put(@"spawn_failed",@{@"profile":profile,@"errno":@(errno)},true);failed=YES;break;}
         pid_t pid=child.pid;log.put(@"worker_start",@{@"profile":profile,@"pid":@(pid)},true);double began=CDClock();BOOL timedOut=NO;int status=0;
         double budget=[profile containsString:@"-key"]?25:15;

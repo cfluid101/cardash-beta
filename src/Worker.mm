@@ -1,4 +1,6 @@
 #import "Common.h"
+#import "XPCTrace.h"
+#import "NativeIdentity.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <dlfcn.h>
@@ -30,7 +32,7 @@
 - (id)sourceVersion;
 - (void)setPublicKey:(id)value;
 - (id)publicKey;
-- (void)startSessionWithHost:(id)host completion:(void(^)(void))completion;
+- (void)startSessionWithHost:(id)host completion:(id)completion;
 - (void)cancelRequests;
 - (id)currentSession;
 - (BOOL)isActivated;
@@ -76,7 +78,7 @@ static BOOL CheckMethods(Class cls,NSArray *specs){
         CDEmit(@"method_abi",@{@"class":cls?NSStringFromClass(cls):@"absent",@"selector":spec[0],@"encoding":method?@(method_getTypeEncoding(method)):@"",@"owner":owner.dli_fname?@(owner.dli_fname):@"",@"matches":@(ok)});
     }return valid;
 }
-static BOOL Load(NSString *name,NSString *path){dlerror();void *handle=dlopen(path.fileSystemRepresentation,RTLD_NOW|RTLD_LOCAL);const char *error=dlerror();CDEmit(@"framework",@{@"name":name,@"loaded":@(handle!=NULL),@"error":error?@(error):@""});return handle!=NULL;}
+static BOOL Load(NSString *name,NSString *path){dlerror();void *handle=dlopen(path.fileSystemRepresentation,RTLD_NOW|RTLD_LOCAL);const char *error=dlerror();CDEmit(@"framework",@{@"name":name,@"path":path,@"loaded":@(handle!=NULL),@"error":error?@(error):@""});return handle!=NULL;}
 static NSDictionary *Session(id observer){
     id session=[observer currentSession];NSMutableDictionary *value=[@{@"present":@(session!=nil)} mutableCopy];
     if(session){Class cls=[session class];for(NSString *name in @[@"isActivated",@"isAuthenticated",@"isPaired"]){
@@ -92,6 +94,31 @@ static void ClassInventory(NSString *needle){
         for(unsigned j=0;j<MIN(total,60u);j++)[descriptions addObject:@{@"selector":NSStringFromSelector(method_getName(methods[j])),@"encoding":@(method_getTypeEncoding(methods[j]))}];free(methods);
         [rows addObject:name];CDEmit(@"class_methods",@{@"class":name,@"method_count":@(total),@"methods":descriptions});}
     free(classes);CDEmit(@"class_inventory",@{@"framework":needle,@"classes":rows,@"limit":@24});
+}
+static void ServiceInventory(void){
+    NSString *directory=@"/System/Library/LaunchDaemons";NSError *error=nil;
+    NSArray *names=[[NSFileManager.defaultManager contentsOfDirectoryAtPath:directory error:&error] sortedArrayUsingSelector:@selector(compare:)];
+    if(!names){CDEmit(@"service_inventory",@{@"available":@NO,@"error":CDXPCTraceError(error)});return;}
+    NSUInteger examined=0,bytes=0,matched=0,unreadable=0;BOOL truncated=NO;
+    for(NSString *name in names){
+        if(![name.pathExtension isEqual:@"plist"])continue;
+        if(examined>=512||bytes>=4*1024*1024||matched>=24){truncated=YES;break;}examined++;
+        NSString *path=[directory stringByAppendingPathComponent:name];NSDictionary *attributes=[NSFileManager.defaultManager attributesOfItemAtPath:path error:NULL];
+        if(![attributes[NSFileType] isEqual:NSFileTypeRegular]||[attributes[NSFileSize] unsignedLongLongValue]>128*1024){unreadable++;continue;}
+        NSData *data=[NSData dataWithContentsOfFile:path options:0 error:NULL];if(!data){unreadable++;continue;}bytes+=data.length;
+        id value=[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:NULL];
+        if(![value isKindOfClass:NSDictionary.class]){unreadable++;continue;}
+        NSDictionary *job=value;id services=job[@"MachServices"];if(![services isKindOfClass:NSDictionary.class])continue;
+        NSMutableArray *selected=[NSMutableArray array];
+        for(id key in services)if([key isKindOfClass:NSString.class]&&[key length]<256&&[[key lowercaseString] containsString:@"carkit"]&&selected.count<16)[selected addObject:key];
+        if(!selected.count)continue;
+        NSMutableDictionary *row=[@{@"path":path,@"services":selected,@"configured_only_not_proof_running":@YES} mutableCopy];
+        for(NSString *key in @[@"Label",@"Program"]){id text=job[key];if([text isKindOfClass:NSString.class]&&[text length]<512)row[key]=text;}
+        id args=job[@"ProgramArguments"];NSMutableArray *safeArgs=[NSMutableArray array];
+        if([args isKindOfClass:NSArray.class])for(id arg in args){if(safeArgs.count>=6)break;if([arg isKindOfClass:NSString.class]&&[arg length]<512)[safeArgs addObject:arg];}
+        row[@"ProgramArguments"]=safeArgs;CDEmit(@"configured_carkit_service",row);matched++;
+    }
+    CDEmit(@"service_inventory",@{@"available":@YES,@"examined":@(examined),@"bytes_read":@(bytes),@"matches":@(matched),@"unreadable_or_skipped":@(unreadable),@"truncated":@(truncated)});
 }
 static void Displays(void){
     if(!Load(@"QuartzCore",@"/System/Library/Frameworks/QuartzCore.framework/QuartzCore"))return;
@@ -134,16 +161,31 @@ static int Attempt(NSString *profile){
     long long port=ntohs(address.sin6_port);BOOL simulator=![profile isEqual:@"root-standard-key"],keyed=![profile isEqual:@"root-simulator-no-key"];
     CDEmit(@"listener_ready",@{@"address":@"::1",@"port":@(port),@"simulator":@(simulator),@"public_key_present":@(keyed),@"public_key_is_trusted_accessory_identity":@NO});
     id client=nil;BOOL issued=NO,transport=NO,newSession=NO,cleanupConfirmed=NO;std::vector<Connection> clients;
-    auto callback=std::make_shared<std::atomic<bool>>(false);
+    auto callback=std::make_shared<std::atomic<bool>>(false),nativeSuccess=std::make_shared<std::atomic<bool>>(false);
+    BOOL typedCompletion=NO;
     @try {
         NSObject *host=[[hostClass alloc] initWithHostProperties:@{}];client=[[clientClass alloc] init];if(!host||!client)@throw [NSException exceptionWithName:@"AllocationFailure" reason:@"CarKit initialization returned nil" userInfo:nil];
         [host setWiredCarPlaySimulator:simulator];[host setWiredIPv6Addresses:@[@"::1"]];[host setWirelessIPv6Addresses:@[]];[host setPort:port];[host setSourceVersion:@"509.0"];
         NSData *publicKey=keyed?[NSData dataWithBytes:CDPublicKey length:32]:nil;[host setPublicKey:publicKey];
         BOOL roundtrip=[host isWiredCarPlaySimulator]==simulator&&[host port]==port&&[[host wiredIPv6Addresses] isEqual:@[@"::1"]]&&[[host wirelessIPv6Addresses] count]==0&&[[host sourceVersion] isEqual:@"509.0"]&&(keyed?[[host publicKey] isEqual:publicKey]:[host publicKey]==nil);
         CDEmit(@"host_roundtrip",@{@"matches":@(roundtrip)});if(!roundtrip)@throw [NSException exceptionWithName:@"HostMismatch" reason:@"Host setters did not round trip" userInfo:nil];
+        NSDictionary *identity=CDCarKitCompletionIdentity(clientClass);CDEmit(@"completion_identity",identity);typedCompletion=[identity[@"typed_completion_enabled"] boolValue];
+        BOOL traceRegistered=CDXPCTraceRegisterClient(client,profile);CDEmit(@"xpc_trace_registration",@{@"registered":@(traceRegistered)});
+        auto mainAlive=std::make_shared<std::atomic<bool>>(false);
+        dispatch_async(dispatch_get_main_queue(),^{mainAlive->store(true);CDEmit(@"main_queue_marker",@{@"main_thread":@(NSThread.isMainThread)});});Pump(.1);
+        CDEmit(@"request_queue",@{@"main_thread":@(NSThread.isMainThread),@"main_queue_marker_observed":@(mainAlive->load())});
         if(!StartGate())@throw [NSException exceptionWithName:@"Cancelled" reason:@"Cancelled before native start" userInfo:nil];
         CDEmit(@"start_call_enter",@{@"profile":profile});issued=YES;
-        [client startSessionWithHost:host completion:^{callback->store(true);}];
+        if(typedCompletion){
+            [client startSessionWithHost:host completion:^(BOOL success,NSError *error){
+                nativeSuccess->store(success);callback->store(true);
+                CDEmit(@"native_completion",@{@"arguments_interpreted":@YES,@"success":@(success),@"error":CDXPCTraceError(error)});
+            }];
+        }else{
+            // A method encoding only identifies a block, not its nested ABI.
+            // Preserve occurrence-only observation for any unknown image pair.
+            [client startSessionWithHost:host completion:^{callback->store(true);CDEmit(@"native_completion",@{@"arguments_interpreted":@NO});}];
+        }
         CDEmit(@"start_call_returned",@{});double end=CDClock()+18,lastSnapshot=0;
         while(!stopWorker&&CDClock()<end){
             for(int i=0;i<4;i++){struct sockaddr_in6 peer={};socklen_t len=sizeof(peer);int fd=accept(listener,(struct sockaddr *)&peer,&len);if(fd<0)break;
@@ -168,9 +210,11 @@ static int Attempt(NSString *profile){
         }
     }@catch(NSException *exception){CDEmit(@"native_exception",@{@"name":exception.name?:@"",@"reason":exception.reason?:@""});}
     // Even a blocked/throwing cancellation is isolated and killed by the parent deadline.
+    CDXPCTraceBeginCleanup();
     if(client){CDEmit(@"cancel_call_enter",@{});@try{[client cancelRequests];cleanupConfirmed=YES;CDEmit(@"cancel_call_returned",@{});}@catch(NSException *e){CDEmit(@"cancel_exception",@{@"name":e.name});}}
     for(auto &c:clients)close(c.fd);close(listener);Pump(.5);NSDictionary *after=Session(observer);CDEmit(@"session_after_cleanup",after);
-    CDEmit(@"native_summary",@{@"profile":profile,@"request_issued":@(issued),@"callback_observed":@(callback->load()),@"transport_connected":@(transport),@"new_session_observed":@(newSession),@"request_cancel_returned":@(cleanupConfirmed),@"session_still_present":after[@"present"],@"live_carplay_verified":@NO,@"conclusion":CDConclusion(issued,callback->load(),transport,newSession)});
+    NSDictionary *trace=CDXPCTraceSummary();CDEmit(@"xpc_trace_summary",trace);
+    CDEmit(@"native_summary",@{@"profile":profile,@"request_issued":@(issued),@"callback_observed":@(callback->load()),@"completion_arguments_enabled":@(typedCompletion),@"native_success":typedCompletion&&callback->load()?@(nativeSuccess->load()):(id)NSNull.null,@"xpc_trace":trace,@"transport_connected":@(transport),@"new_session_observed":@(newSession),@"request_cancel_returned":@(cleanupConfirmed),@"session_still_present":after[@"present"],@"live_carplay_verified":@NO,@"conclusion":CDConclusion(issued,callback->load(),transport,newSession)});
     if(stopWorker&&!issued)return 0;
     return [after[@"present"] boolValue]?23:issued&&cleanupConfirmed?0:1;
 }
@@ -187,14 +231,18 @@ int CDWorker(NSString *profile){@autoreleasepool{
     usleep(120000);CDEmit(@"host_fixture_complete",@{@"profile":profile});return 0;
 #else
     CDEmit(@"worker_environment",@{@"profile":profile,@"model":CDSystem("hw.machine"),@"build":CDSystem("kern.osversion"),@"uid":@(getuid()),@"euid":@(geteuid())});
+    NSDictionary *ipc=CDIPCEnvironment();CDEmit(@"worker_ipc_environment",ipc);
+    if([profile isEqual:@"root-simulator-entitlement-key"]&&![ipc[@"signed_entitlements"][@"com.apple.private.carkit.sessionRequest"] isEqual:@YES]){
+        CDEmit(@"request_withheld",@{@"reason":@"entitlement_comparison_invalid_effective_value_not_true"});return 21;
+    }
     if(![CDSystem("hw.machine") isEqual:@"iPhone10,2"]||![CDSystem("kern.osversion") isEqual:@"20G75"]){CDEmit(@"unsupported_target",@{@"expected":@"iPhone10,2 / 20G75",@"private_calls_withheld":@YES});return 21;}
     @try{
         if([profile isEqual:@"displays"]){Displays();return 0;}
         if([profile isEqual:@"receiver"]){if(Load(@"AirPlayReceiver",@"/System/Library/PrivateFrameworks/AirPlayReceiver.framework/AirPlayReceiver"))ClassInventory(@"AirPlayReceiver.framework");return 0;}
         if([profile isEqual:@"system-log-fallback"]){LegacyLogs();return 0;}
         if(!Load(@"CarKit",@"/System/Library/PrivateFrameworks/CarKit.framework/CarKit"))return 21;
-        if([profile isEqual:@"inventory"]){ClassInventory(@"CarKit.framework");id observer=Observer();if(observer){Pump(1);CDEmit(@"session_inventory",Session(observer));}return 0;}
-        if([@[@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key"] containsObject:profile])return Attempt(profile);
+        if([profile isEqual:@"inventory"]){ServiceInventory();ClassInventory(@"CarKit.framework");id observer=Observer();if(observer){Pump(1);CDEmit(@"session_inventory",Session(observer));}return 0;}
+        if([@[@"root-simulator-key",@"root-simulator-no-key",@"root-standard-key",@"mobile-simulator-key",@"root-simulator-entitlement-key",@"root-simulator-baseline-after-key"] containsObject:profile])return Attempt(profile);
         CDEmit(@"unknown_profile",@{});return 2;
     }@catch(NSException *e){CDEmit(@"worker_exception",@{@"name":e.name,@"reason":e.reason?:@""});return 1;}
 #endif
