@@ -6,6 +6,8 @@ The receiver currently runs on the Mac. SSH forwards the phone's loopback TCP co
 
 ## Local run
 
+For a manual test on this already-prepared Mac, connect and unlock the iPhone, open the existing CarDash V2 companion, then double-click `Start Native CarPlay.command`. It runs the tested 150-second driver and opens the native viewer in normal Chrome once video is available. No token entry is needed. Click icons and Home to test navigation; audio is not implemented. Keep the phone unlocked for this trial. The session ends automatically, and Ctrl+C in the launcher stops it sooner. Relaunch for another trial. This launcher does not install a product DEB or change the original app's settings.
+
 Prerequisites: existing USB SSH forwarding, the enrolled SSH key, Node 20+, Python 3, Xcode, FFmpeg/FFprobe, and Chrome for the optional browser test. The driver currently uses this research session's SSH helper and its known-hosts file. It does not discover or trust new devices automatically.
 
 From the `carplay-diagnostics` directory:
