@@ -3,3 +3,4 @@ dist/
 evidence/*
 .superpowers/
 __pycache__/
+receiver/node_modules/
