@@ -1,0 +1,10 @@
+Package: com.cfluid.cardash.diagnostics
+Name: CarDash CarPlay Diagnostics
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Section: Development
+Depends: firmware (>= 16.6), firmware (<< 16.7), uikittools
+Maintainer: cfluid
+Author: cfluid
+Description: Standalone, user-triggered CarPlay startup diagnostics for iPhone 8 Plus on iOS 16.6/Dopamine rootless. Collects one shareable log. Does not replace CarDash or implement a full authenticated receiver.
+Homepage: https://github.com/cfluid101/cardash-beta

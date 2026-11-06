@@ -1,0 +1,9 @@
+#!/var/jb/bin/sh
+set -eu
+case "${1:-}" in
+ remove|purge)
+  /var/jb/usr/bin/uicache -u /var/jb/Applications/CarDashDiagnostics.app >/dev/null 2>&1 || :
+  # Reports are user data and remain available after removal.
+ ;;
+esac
+exit 0

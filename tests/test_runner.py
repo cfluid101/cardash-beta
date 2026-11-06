@@ -54,5 +54,17 @@ class RunnerTests(unittest.TestCase):
     def test_noisy_worker_cannot_remove_terminal_summary(self):
         root,_=self.start('noisy');self.command(root,'RUN');rows=self.finish(root)
         self.assertTrue(any(x['event']=='output_truncated' for x in rows));self.assertLess((root/self.command(root,'STATUS')['report']).stat().st_size,7*1024*1024)
+    def test_installer_rejects_hardlinked_log_without_changing_target(self):
+        self.assertTrue(BIN.is_file())
+        with tempfile.TemporaryDirectory(prefix='cddiag-',dir='/tmp') as d:
+            root=Path(d);target=root/'unrelated';target.write_text('preserve me');target.chmod(0o600)
+            os.link(target,root/'installation.log');env=dict(os.environ,CD_DIAG_ROOT=d)
+            p=subprocess.run([str(BIN),'--prepare'],env=env,capture_output=True)
+            self.assertNotEqual(p.returncode,0);self.assertEqual(target.read_text(),'preserve me');self.assertEqual(target.stat().st_mode&0o777,0o600)
+    def test_installer_prepares_only_its_own_files(self):
+        self.assertTrue(BIN.is_file())
+        with tempfile.TemporaryDirectory(prefix='cddiag-',dir='/tmp') as d:
+            p=subprocess.run([str(BIN),'--prepare'],env=dict(os.environ,CD_DIAG_ROOT=d),capture_output=True)
+            self.assertEqual(p.returncode,0,p.stderr.decode());self.assertEqual({x.name for x in Path(d).iterdir()},{'installation.log','helper-bootstrap.log'})
 
 if __name__=='__main__':unittest.main()
