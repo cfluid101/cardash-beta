@@ -1,15 +1,17 @@
-# CarDash HTTPS transport experiment
+# CarDash HTTPS transport prototype
 
-Static frontend for the isolated option 1 prototype. Not a production release.
+https://cfluid101.github.io/cardash-beta/option1/?v=https2
 
-https://cfluid101.github.io/cardash-beta/option1/
+HTTPS2 adds compact overlay controls, bounded touch handling, independent
+heartbeats and stream recovery. Matching experimental phone backend required.
+User testing confirmed the HTTPS1 canvas path displays native CarPlay in Drive;
+HTTPS2 performance and endurance in the Tesla still require validation.
 
-The browser downloads these interface files over HTTPS, then connects directly
-to a local iPhone service after local-network permission. GitHub does not relay
-CarPlay frames, touch events, audio, controller tokens, or device diagnostics.
+Only static interface files are hosted here. All native video, audio, input,
+controller tokens and diagnostics stay on the browser-to-local-phone connection.
+No cloud media relay, domain purchase or setup code is required. First loading
+needs internet access. Bluetooth/phone output remains the default.
 
-Requires the matching experimental phone backend. Tesla browser compatibility
-and navigation display updates in Drive are not yet verified. Bluetooth audio
-remains the default phone output. No offline startup guarantee is made.
-
-JavaScript source is included directly in this branch. See LICENSE.
+The readable JavaScript source is included directly. HTTPS1 scripts remain for
+cached older pages; HTTPS2 scripts have immutable content-addressed filenames.
+See LICENSE. No phone data, logs, credentials or packages are in this branch.
