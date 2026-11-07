@@ -30,12 +30,12 @@ from media import Muxer,keyframe
 from provision import CERT_SHA256
 from audio_transport import AudioChannel
 from network import TeslaNetwork,allowed_peer
-from transport import transport_status,startup_failure
+from transport import transport_status,startup_failure,AudioLease,audio_route_status
 
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.3'
+VERSION='3.0.0-beta.4'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 
 def plist(data):return plistlib.dumps(data,fmt=plistlib.FMT_BINARY,sort_keys=False)
@@ -59,8 +59,17 @@ class Receiver:
         self.capture=None;self.capture_bytes=0;self.last_pointer=None
         self.provision_task=None;self.provision_child=None
         self.generation=None
+        self.reset_video_history();self.last_keyframe_request=-float('inf')
         self.audio_channels={};self.audio_history=[];self.audio_viewers={};self.audio_ducked=False;self.clock_offset=0
         self.pending_commands={}
+        self.settings_path=self.state/'settings.json'
+        try:
+            settings=json.loads(self.settings_path.read_text()) if self.settings_path.exists() else {}
+            self.settings=settings if isinstance(settings,dict) else {}
+        except (OSError,ValueError):self.settings={}
+        self.audio_output='browser' if self.settings.get('audioOutput')=='browser' else 'phone'
+        self.audio_lease=AudioLease()
+        self.last_browser_metrics=-float('inf')
         self.network=TeslaNetwork(args.port)
         self.log('service_started',version=VERSION)
     def log(self,event,**values):
@@ -75,9 +84,36 @@ class Receiver:
         return all((self.state/'accessory'/x).is_file() for x in ['identity.pk8','certificate.p7b'])
     def status(self):
         return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,network=self.network.status,transport=transport_status(self.state),
-                    nativeFrames=self.frames,codec=self.codec,videoConnected=bool(self.video),eventConnected=bool(self.event),
+                    nativeFrames=self.frames,codec=self.codec,videoConnected=bool(self.video),eventConnected=bool(self.event),videoKeyframes=self.video_keyframes,videoTimelineTicks=self.video_ticks,
                     native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
-                    audioSupported=True,microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=1280,sourceHeight=720)
+                    audioSupported=True,audioOutput=self.audio_output,audioRouting=audio_route_status(),microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=1280,sourceHeight=720)
+    def receiver_info(self):
+        # iOS still requires complete CarPlay authentication/audio declarations.
+        # The scoped native adapter preserves the phone route independently.
+        return plistlib.loads((ROOT/'receiver-info.plist').read_bytes())
+    async def set_audio_output(self,mode):
+        need(mode in ('phone','browser'),'Invalid audio output')
+        async with self.lock:
+            need(not self.active and not self.provisioning,'Stop CarPlay before changing audio output')
+            settings={**self.settings,'audioOutput':mode}
+            tmp=self.settings_path.with_suffix('.tmp')
+            fd=os.open(tmp,os.O_CREAT|os.O_TRUNC|os.O_WRONLY|os.O_NOFOLLOW,0o600)
+            with os.fdopen(fd,'w') as f:json.dump(settings,f)
+            tmp.replace(self.settings_path)
+            self.settings=settings;self.audio_output=mode
+            self.log('audio_output_changed',mode=mode)
+            return self.status()
+    def browser_metrics(self,value):
+        now=time.monotonic()
+        if not isinstance(value,dict) or now-self.last_browser_metrics<12:return
+        clean={}
+        limits={'width':16384,'height':16384,'decodedFrames':10**10,'droppedFrames':10**10,'currentTime':10**8,'readyState':4,'mediaError':4,'videoErrors':10**8}
+        for key,limit in limits.items():
+            n=value.get(key)
+            if type(n) in (int,float) and math.isfinite(n) and 0<=n<=limit:clean[key]=n
+        for key in ('paused','hidden'):
+            if type(value.get(key)) is bool:clean[key]=value[key]
+        if clean:self.last_browser_metrics=now;self.log('browser_metrics',**clean)
     async def prepare(self):
         if self.ready():return
         need(not self.provisioning,'Identity preparation is already running')
@@ -128,9 +164,12 @@ class Receiver:
             need(not self.provisioning,'Wait for identity preparation to finish')
             need(self.ready(),'Open CarDash V3 on the phone and tap Prepare Native Preview first')
             transport=transport_status(self.state);need(transport['ready'],transport.get('error','Transport unavailable'))
+            if self.audio_output=='phone':
+                routing=audio_route_status();need(routing['ready'],routing.get('error','Audio routing unavailable'))
             self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
             need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
             self.frames=0;self.codec=None;self.muxer=None;self.pending=None;self.native={};self.error='';self.native_error='';self.capture_bytes=0
+            self.reset_video_history();self.last_keyframe_request=-float('inf')
             self.audio_history=[];self.audio_ducked=False;self.clock_offset=0
             self.pending_commands.clear()
             self.generation=os.urandom(16).hex()
@@ -138,10 +177,18 @@ class Receiver:
                 folder=Path(self.args.capture);folder.mkdir(parents=True,exist_ok=True,mode=0o700)
                 self.capture=(folder/'native.mp4').open('wb')
             public=crypto.public(bytes.fromhex(self.identity['seed'])).hex()
-            self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'0',stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
+            try:
+                self.audio_lease.refresh(self.audio_output=='phone')
+                self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'0',stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
+            except BaseException:
+                try:self.audio_lease.clear()
+                except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
+                if self.capture:self.capture.close();self.capture=None
+                self.generation=None
+                raise
             self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False
             self.native_watch=asyncio.create_task(self.watch_helper(self.helper,self.generation))
-            self.log('native_start',pid=self.helper.pid);return self.status()
+            self.log('native_start',pid=self.helper.pid,audioOutput=self.audio_output);return self.status()
     async def watch_helper(self,child,generation):
         try:
             while True:
@@ -167,6 +214,8 @@ class Receiver:
             # Disconnect callbacks can wait behind another Stop/Start. Their
             # captured session must still own the receiver after that wait.
             if generation is not None and generation!=self.generation:return False
+            try:self.audio_lease.clear()
+            except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
             child=self.helper;self.helper=None;self.active=False;self.generation=None
             if child and child.returncode is None:
                 child.terminate()
@@ -212,7 +261,8 @@ class Receiver:
         await asyncio.sleep(.5)
         if generation!=self.generation:return
         try:
-            await self.command({'type':'changeModes','params':{'resources':[{'resourceID':1,'transferType':2},{'resourceID':2,'transferType':2}]}},generation)
+            resources=[{'resourceID':1,'transferType':2},{'resourceID':2,'transferType':2}]
+            await self.command({'type':'changeModes','params':{'resources':resources}},generation)
             await self.command({'type':'showUI','params':{'url':'carplay:'}},generation)
         except Exception as e:self.log('show_ui_error',error=str(e))
     def native_command(self,body):
@@ -252,6 +302,7 @@ class Receiver:
                 self.log('audio_viewer_lag',reason=reason,dropped_packets=state['dropped_packets'],dropped_bytes=state['dropped_bytes'],queued_bytes=state['bytes'],queued_packets=queue.qsize())
             state['bytes']+=len(packet);state['next_record']+=1;queue.put_nowait((state['next_record'],packet))
     async def audio_viewer(self,writer,generation,reader=None):
+        need(self.audio_output=='browser','Browser audio is disabled')
         need(self.active and generation==self.generation,'Stale native session');need(len(self.audio_viewers)<2,'Two audio viewers are already connected')
         queue=asyncio.Queue(maxsize=64);state={'bytes':0,'closed':False,'reset_lanes':{},'next_record':0,'dropped_packets':0,'dropped_bytes':0};self.audio_viewers[queue]=state
         try:
@@ -287,7 +338,7 @@ class Receiver:
                         if pair.error:self.log('pairing_error',error=pair.error)
                     elif not pair.verified:status=403
                     elif path=='/auth-setup':body=mfi_sap(request['body'],self.der,self.cert)
-                    elif path=='/info':body=plistlib.loads((ROOT/'receiver-info.plist').read_bytes());body=plist(body);kind='application/x-apple-binary-plist'
+                    elif path=='/info':body=plist(self.receiver_info());kind='application/x-apple-binary-plist'
                     elif method=='SETUP':
                         value=plistlib.loads(request['body']);reply={}
                         if 'streams' in value:
@@ -390,9 +441,22 @@ class Receiver:
             writer.close()
             if self.event is writer:self.event=None
             if self.active and generation==self.generation:asyncio.create_task(self.stop('native_event_disconnected',generation=generation))
+    def reset_video_history(self):
+        self.video_keyframes=[];self.video_ticks=0;self.video_gop_bytes=0;self.video_last_idr_at=0
+    async def request_keyframe(self,generation,reason):
+        need(self.active and generation==self.generation,'Stale native session')
+        now=time.monotonic()
+        if reason!='viewer_join' and now-self.last_keyframe_request<30:return False
+        # Set before the awaited command so concurrent demand cannot request a
+        # burst of encoder restarts. A failed attempt also keeps this cooldown.
+        self.last_keyframe_request=now
+        await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}},generation)
+        self.log('keyframe_requested',reason=reason,gopBytes=self.video_gop_bytes)
+        return True
     def configure(self,config):
         if self.muxer and self.muxer.config==config:return
         self.muxer=Muxer(config,1280,720);self.codec=self.muxer.codec;self.initial=self.muxer.initialization();self.pending=None
+        self.reset_video_history()
         self.log('native_video_config',codec=self.codec)
         if self.capture:self.capture.write(self.initial)
         for q in list(self.viewers):
@@ -403,6 +467,12 @@ class Receiver:
         if self.pending:
             old,ts,oldkey=self.pending;fragment=self.muxer.fragment(old,ts,timestamp)
             if fragment:
+                ticks=(ts-self.muxer.base)*90000//1000000
+                self.video_ticks=(timestamp-self.muxer.base)*90000//1000000
+                if oldkey:
+                    self.video_keyframes.append(ticks);self.video_keyframes=self.video_keyframes[-32:]
+                    self.video_gop_bytes=0;self.video_last_idr_at=time.monotonic()
+                self.video_gop_bytes+=len(old)
                 if self.capture and self.capture_bytes+len(fragment)<=32*1024*1024:self.capture.write(fragment);self.capture_bytes+=len(fragment)
                 for q,state in list(self.viewers.items()):
                     if state['closed'] or state['session']!=self.generation:continue
@@ -441,6 +511,10 @@ class Receiver:
             await asyncio.sleep(2)
             if not self.active:continue
             generation=self.generation
+            try:self.audio_lease.refresh(self.audio_output=='phone')
+            except OSError as e:
+                self.error='Audio route lease failed: '+str(e);self.log('audio_lease_failed',error=self.error)
+                await self.stop('audio_lease_failed',generation=generation);continue
             failure=startup_failure(self.active,self.frames,self.started,time.monotonic(),self.native_error)
             if failure:
                 self.error=failure;self.log('native_start_failed',error=failure,native=self.native)
@@ -450,18 +524,24 @@ class Receiver:
             if self.helper and self.helper.stdin:
                 try:self.helper.stdin.write(b'H');await asyncio.wait_for(self.helper.stdin.drain(),1)
                 except (BrokenPipeError,ConnectionError,asyncio.TimeoutError):await self.stop('native_lease_failed',generation=generation);continue
-            if self.viewers and self.event:
-                try:await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}})
+            # This command restarts the hardware encoder on iOS 16.6. A long
+            # GOP needs a bounded recovery point for safe browser eviction, but
+            # healthy heartbeats must not repeatedly rebuild the encoder.
+            now=time.monotonic()
+            if self.viewers and self.event and self.video_last_idr_at and (self.video_gop_bytes>8*1024*1024 or now-self.video_last_idr_at>30):
+                try:await self.request_keyframe(generation,'long_gop')
                 except Exception as e:self.log('keyframe_error',error=str(e))
     async def action(self,value,local=False):
         action=value.get('action')
         if action=='status':return self.status()
         if action=='start':return await self.start()
+        if action=='audio_output':return await self.set_audio_output(value.get('mode'))
         if action in ('stop','heartbeat') and not local:need(self.active and value.get('session')==self.generation,'Stale native session')
         if action=='stop':
             stopped=await self.stop(generation=None if local else value.get('session'))
             need(stopped,'Stale native session');return self.status()
-        if action=='heartbeat':self.last_heartbeat=time.monotonic();self.had_viewer=True;return self.status()
+        if action=='heartbeat':
+            self.last_heartbeat=time.monotonic();self.had_viewer=True;self.browser_metrics(value.get('browser'));return self.status()
         if action=='touch':return await self.touch(value)
         if action=='prepare' and local:await self.prepare();return self.status()
         if action=='import' and local:return await self.import_identity()
@@ -526,7 +606,7 @@ class Receiver:
         except Exception as e:
             self.log('browser_request_rejected',error=str(e))
             try:await self.reply(writer,400,json.dumps({'error':str(e)}).encode())
-            except (ConnectionError,OSError):pass
+            except (ConnectionError,OSError,asyncio.TimeoutError):pass
         finally:self.connections.discard(writer);writer.close()
     async def reply(self,writer,status,data,kind='application/json',extra=None):
         values={'Content-Type':kind,'Content-Length':str(len(data)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close',**(extra or {})}
@@ -537,7 +617,8 @@ class Receiver:
         q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
         try:
             writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n');await asyncio.wait_for(writer.drain(),3)
-            await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}},state['session'])
+            if not self.active:return
+            await self.request_keyframe(state['session'],'viewer_join')
             while self.active and state['session']==self.generation and not state['closed'] and not (reader and reader.at_eof()):
                 try:fragment=await asyncio.wait_for(q.get(),4)
                 except asyncio.TimeoutError:

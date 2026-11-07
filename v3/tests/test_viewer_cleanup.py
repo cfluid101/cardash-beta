@@ -34,6 +34,7 @@ class ViewerCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         args = types.SimpleNamespace(state=self.tmp.name, port=0, capture=None, helper='/unused')
         self.receiver = Receiver(args)
+        self.receiver.audio_output = 'browser'
         self.receiver.generation = 'test-generation'
         self.receiver.video = object()
         self.receiver.muxer = object()
@@ -121,7 +122,7 @@ class ViewerCleanupTest(unittest.IsolatedAsyncioTestCase):
             r.viewers[queue] = {'closed': False, 'session': session, 'ready': True, 'bytes': 0}
         nal = bytes.fromhex('000000026501')
         r.pending = (nal, 0, True)
-        r.muxer = types.SimpleNamespace(fragment=lambda *args: b'new-frame')
+        r.muxer = types.SimpleNamespace(base=0,fragment=lambda *args: b'new-frame')
         r.frame(nal, 33333)
         self.assertTrue(old.empty())
         self.assertEqual(new.get_nowait(), b'new-frame')
@@ -166,7 +167,7 @@ class ViewerCleanupTest(unittest.IsolatedAsyncioTestCase):
         r.viewers[video] = {'bytes': 5, 'closed': False, 'session': r.generation, 'ready': True}
         nal = bytes.fromhex('000000026501')
         r.pending = (nal, 0, True)
-        r.muxer = types.SimpleNamespace(fragment=lambda *args: b'next')
+        r.muxer = types.SimpleNamespace(base=0,fragment=lambda *args: b'next')
         r.frame(nal, 33333)
         r.frame(nal, 66666)
         drops = [call for call in r.log.call_args_list if call.args[0] == 'video_viewer_dropped']

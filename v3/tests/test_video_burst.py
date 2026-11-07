@@ -38,7 +38,7 @@ class VideoBurstTest(unittest.IsolatedAsyncioTestCase):
             r.generation = 'burst'
             r.screen_key = bytes(range(32))
             r.stop = AsyncMock()
-            r.configure = lambda config: setattr(r, 'muxer', SimpleNamespace(fragment=lambda *args: b'frame'))
+            r.configure = lambda config: setattr(r, 'muxer', SimpleNamespace(base=0,fragment=lambda *args: b'frame'))
             r.initial = b'init'
             q = asyncio.Queue(maxsize=90)
             state = {'bytes': 0, 'closed': False, 'session': r.generation, 'ready': True}

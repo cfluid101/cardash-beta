@@ -1,4 +1,23 @@
-# CarDash V3 beta 3 — validation
+# CarDash V3 beta 4 — validation
+
+Target: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 build 20G75, Dopamine rootless. Beta 4 uses the real phone with a Mac Chrome viewer forwarded over USB; inherited beta 3 Wi-Fi/USB-free evidence is recorded separately below. No new Tesla driving test was performed on the computer.
+
+## Changes and regressions
+
+- The native 1280×720 source now fills the browser rectangle by stretching both axes. Input coordinates use the same rectangle. This fills the available web viewport but does not change the native resolution or Tesla system chrome. Proportions can change.
+- Phone / Bluetooth is the initial default and the output selection persists in V3’s own settings file. Browser audio is optional. A short-lived PID-bound lease scopes the exact-build MediaExperience routing adapter to an owned CarDash session. It retains valid native audio/authentication declarations, avoids opening a browser audio connection in phone mode, and restores native routing intent on stop or lease expiry. Real Bluetooth selection and steering-wheel controls still require a parked car trial.
+- Device research found Python 3.9’s Darwin monotonic clock uses a per-process origin despite reporting `mach_absolute_time()` as its implementation. Cross-process leases now use raw Mach ticks and their timebase. Earlier experiments with invalid leases were not counted as routing passes.
+- Native audio hook initialization was corrected to avoid notification reads while holding its routing mutex, and the monitor starts after synchronous dyld registration. VM guards traverse shared-cache submaps to verify actual leaf permissions. Exact firmware UUID and instruction checks remain enforced.
+- The old two-second `forceKeyFrame` timer repeatedly tore down and rebuilt iOS’s video encoder. In the recorded failure, 34 restarts produced only 33 resumes; the final teardown stalled, native commands returned 408, and the encoder later reported a driver-stop counter mismatch. The two-second timer is removed. A joining viewer still requests its initial keyframe; long GOP recovery is limited to one request per 30 seconds when no IDR arrives for 30 seconds or compressed GOP data exceeds 8 MiB. The failed run is not an endurance pass.
+- Removing frequent encoder resets exposed a second bug: arbitrary SourceBuffer trimming could delete the current long GOP through the next random-access point. The browser now trims only before an emitted IDR at least three seconds behind the playhead, using exact 90 kHz clock timestamps; the server retains at most 32 such markers. If there is no safe trim point and retained video exceeds 90 seconds, the browser reports an error and reconnects instead of retaining an unbounded history. The separate 4 MiB pending-read queue bound remains.
+- The previous car-session logs showed browser heartbeat timeouts and five audio-queue saturation events, but had no gear state or browser playback/viewport counters. They do not establish why playback stopped when shifting into Drive. Beta 4 adds bounded playback counters, visibility/pause state and decoder errors for diagnosis. **No Tesla driving-video restriction bypass is included.**
+- HTTP error cleanup now handles Python 3.9’s separate asyncio.TimeoutError type. Audio-output changes disable/guard Start and Stop until the stop/configure/start sequence finishes, avoiding conflicting sessions.
+
+## Local verification
+
+89 Python tests, 43 JavaScript tests and one cross-process launcher test pass (133 total). Regressions cover wide/tall coordinate mapping, default/persisted audio choice, asynchronous output-switch races, raw Mach lease clocks, stop/start cleanup, firmware/memory guards, concurrent native callbacks, lease expiry and restoration, metric bounds, timeout cleanup, and retaining viewer-join keyframes with bounded long-GOP recovery instead of two-second encoder resets. Builds use arm64/iOS16.6 warnings-as-errors and package-path/credential audits.
+
+## Historical beta 3 validation
 
 Test device: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 build 20G75, Dopamine rootless. The receiver runs on the phone. Beta 3 trials use a Mac browser over home Wi-Fi with USB disconnected; the Mac does not receive/decrypt the native protocol or host the native session.
 

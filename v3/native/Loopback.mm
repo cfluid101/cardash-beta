@@ -8,6 +8,11 @@
 #include <cstring>
 #include <cstdint>
 #include <unistd.h>
+#ifdef CDV3_LOOPBACK_TEST
+static void CDV3AudioHost(bool) {}
+#else
+#include "AudioRoute.h"
+#endif
 
 @protocol CDV3LoopbackHost <NSObject>
 - (id)deviceIdentifier;
@@ -35,7 +40,9 @@ static bool OwnHost(uint8_t *state) {
 
 static int32_t Update(CFTypeRef helper) {
     uint8_t *s=(uint8_t *)DerivedStorage(helper);
-    if (!OwnHost(s)) return OriginalUpdate(helper);
+    bool own=OwnHost(s);
+    CDV3AudioHost(own);
+    if (!own) return OriginalUpdate(helper);
     CFDictionaryRef originalMap=*(CFDictionaryRef *)(s+0x98);
     if (!originalMap || CFGetTypeID(originalMap)!=CFDictionaryGetTypeID()) return OriginalUpdate(helper);
     CFMutableDictionaryRef map=CFDictionaryCreateMutableCopy(kCFAllocatorDefault,0,originalMap);

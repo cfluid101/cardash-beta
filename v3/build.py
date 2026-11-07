@@ -2,7 +2,7 @@
 """Build an isolated V3 rootless DEB. This script never deploys or connects."""
 from pathlib import Path
 import subprocess,plistlib,hashlib,json,shutil,io,tarfile,os,importlib.util,re
-ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.3'
+ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.4'
 def run(args):subprocess.run([str(x) for x in args],check=True,cwd=ROOT)
 def writeplist(path,value):path.write_bytes(plistlib.dumps(value))
 def source_commit():
@@ -24,7 +24,7 @@ def main():
  run(['xcrun','--sdk','iphoneos','clang','-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.6','-dynamiclib','-Wall','-Wextra','-Werror','-I',openssl/'include',SRC/'native/Crypto.c',stub,'-install_name','/var/jb/usr/lib/cardash-v3/backend/libcardashcrypto.dylib','-o',crypto]);sign(crypto)
  audio=OUT/'libcardashaudio.dylib';run(['xcrun','--sdk','iphoneos','clang','-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.6','-dynamiclib','-Wall','-Wextra','-Werror',SRC/'native/AudioDecode.c','-framework','AudioToolbox','-install_name','/var/jb/usr/lib/cardash-v3/backend/libcardashaudio.dylib','-o',audio]);sign(audio)
  network=OUT/'libcardashnetwork.dylib';run(['xcrun','--sdk','iphoneos','clang','-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.6','-dynamiclib','-Wall','-Wextra','-Werror',SRC/'native/Network.c','-install_name','/var/jb/usr/lib/cardash-v3/backend/libcardashnetwork.dylib','-o',network]);sign(network)
- loopback=OUT/'CarDashV3Loopback.dylib';run([*flags,SRC/'native/Loopback.mm','-dynamiclib','-framework','Foundation','-install_name','/var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib','-o',loopback]);sign(loopback)
+ loopback=OUT/'CarDashV3Loopback.dylib';run([*flags,SRC/'native/Loopback.mm',SRC/'native/AudioRoute.mm','-dynamiclib','-framework','Foundation','-install_name','/var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib','-o',loopback]);sign(loopback)
  app=OUT/'CarDashV3.app';app.mkdir(exist_ok=True);run([*flags,SRC/'app/main.mm','-framework','Foundation','-framework','UIKit','-o',app/'CarDashV3'])
  writeplist(app/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.v3.host','CFBundleExecutable':'CarDashV3','CFBundleName':'CarDash V3','CFBundleDisplayName':'CarDash V3','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'3','CFBundleShortVersionString':'3.0.0','MinimumOSVersion':'16.6','CFBundleSupportedPlatforms':['iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
  spec=importlib.util.spec_from_file_location('diagnostic_build',ROOT/'build.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)

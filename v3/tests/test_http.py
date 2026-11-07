@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from server import Receiver
 class HttpTest(unittest.IsolatedAsyncioTestCase):
@@ -43,4 +44,23 @@ class HttpTest(unittest.IsolatedAsyncioTestCase):
   self.assertEqual(len(records[0]['text']),2*1024*1024)
   self.assertTrue(any(r['event']=='service_started' for r in records))
   self.assertLessEqual(len(report),4*1024*1024)
+ async def test_timed_out_error_reply_closes_request_without_escaping(self):
+  # Device Python 3.9's asyncio.TimeoutError is not an OSError. Newer host
+  # Python aliases it to the built-in TimeoutError, which can hide this bug.
+  class DeviceTimeoutError(Exception):pass
+  class StalledWriter:
+   def __init__(self,port):self.port=port;self.closed=False;self.writes=[]
+   def get_extra_info(self,name):return ('127.0.0.1',self.port)
+   def write(self,data):self.writes.append(data)
+   async def drain(self):raise DeviceTimeoutError()
+   def close(self):self.closed=True
+  reader=asyncio.StreamReader();writer=StalledWriter(self.port)
+  reader.feed_data(f'GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nCookie: cdv3={self.r.token}\r\n\r\n'.encode());reader.feed_eof()
+  with patch.object(asyncio,'TimeoutError',DeviceTimeoutError):
+   await self.r.http(reader,writer)
+  self.assertTrue(writer.closed);self.assertNotIn(writer,self.r.connections)
+  self.assertEqual(len(writer.writes),2)
+  self.assertTrue(writer.writes[0].startswith(b'HTTP/1.1 200'))
+  self.assertTrue(writer.writes[1].startswith(b'HTTP/1.1 400'))
+  self.assertIn(b'200 OK',await self.request())
 if __name__=='__main__':unittest.main()

@@ -10,15 +10,15 @@ class Events{
  removeEventListener(type,fn){this.events.set(type,(this.events.get(type)||[]).filter(f=>f!==fn));}
  emit(type,...args){for(const fn of [...(this.events.get(type)||[])])fn(...args);}
 }
-function fixture({muted=false,audioError='',session='first',autoOpen=true,active=true}={}){
- const media=[],streams=[],videoCallbacks=[],touches=[],urls=new Map(),elements=new Map();
- let service={active,identityReady:true,session:active?session:null,sessionSeconds:1,error:'',codec:'avc1.64001f',videoConnected:active};
+function fixture({muted=false,audioError='',session='first',autoOpen=true,active=true,audioOutput='browser'}={}){
+ const media=[],streams=[],videoCallbacks=[],touches=[],requests=[],urls=new Map(),elements=new Map();
+ let service={active,identityReady:true,session:active?session:null,sessionSeconds:1,error:'',codec:'avc1.64001f',videoConnected:active,audioOutput};
  let failAudio=audioError,failEnable='',deferTouch=null;
  const classSet=new Set(),body={classList:{add(v){classSet.add(v);},remove(v){classSet.delete(v);}}};
  function element(){return {textContent:'',title:'',disabled:false,setAttribute(k,v){this[k]=v;}};}
  const video={...element(),paused:true,currentTime:0,buffered:{length:0},pause(){this.paused=true;},load(){},removeAttribute(){this.url=null;},play(){this.paused=false;return Promise.resolve();},requestVideoFrameCallback(fn){videoCallbacks.push(fn);},getBoundingClientRect(){return {left:0,top:0,width:1280,height:720};},setPointerCapture(){}};
  Object.defineProperty(video,'src',{set(value){this.url=value;if(autoOpen)queueMicrotask(()=>urls.get(value)?.emit('sourceopen'));},get(){return this.url;}});
- elements.set('video',video);for(const id of ['status','start','stop','sound','full','exitFull'])elements.set('#'+id,element());
+ elements.set('video',video);for(const id of ['status','start','stop','sound','audioOutput','full','exitFull'])elements.set('#'+id,element());
  class SourceBuffer extends Events{constructor(){super();this.updating=false;this.buffered={length:0};this.appended=[];}appendBuffer(data){this.appended.push(data);}remove(){}}
  class Media extends Events{constructor(){super();media.push(this);}addSourceBuffer(){this.buffer=new SourceBuffer();return this.buffer;}}
  const audioState={enabled:true,muted,contextState:'running',connectionState:'idle',error:audioError};
@@ -29,15 +29,17 @@ function fixture({muted=false,audioError='',session='first',autoOpen=true,active
   if(url==='/api/status')return {ok:true,json:async()=>({...service})};
   if(url==='/video'){const s=stream();s.session=options.headers['X-CarDash-Session'];return {ok:true,body:{getReader(){return s;}}};}
   const value=options.body?JSON.parse(options.body):{};
+  requests.push({url,value});
   if(url==='/api/start')service={...service,active:true,session:'started',videoConnected:true};
   if(url==='/api/stop')service={...service,active:false,session:null,videoConnected:false};
+  if(url==='/api/audio_output')service={...service,audioOutput:value.mode};
   if(url==='/api/touch'){touches.push(value);if(deferTouch){const current=deferTouch;deferTouch=null;return current;}}
   return {ok:true,json:async()=>({...service})};
  }
  const globals={document:{querySelector(s){return elements.get(s);},body},MediaSource:Media,URL:{createObjectURL(m){const u='blob:'+urls.size;urls.set(u,m);return u;},revokeObjectURL(){}},AbortController,DOMException,CarDashAudio:audio,fetch,setInterval(){},performance:{now:()=>100},console};
  globals.window=globals;globals.addEventListener=()=>{};
  const context=vm.createContext(globals);vm.runInContext(code,context);
- return {elements,media,streams,videoCallbacks,audioState,audioCalls,touches,classSet,
+ return {elements,media,streams,videoCallbacks,audioState,audioCalls,touches,requests,classSet,
   run(s){return vm.runInContext(s,context);},set service(v){service={...service,...v};},set failAudio(v){failAudio=v;},set failEnable(v){failEnable=v;},deferNextTouch(p){deferTouch=p;}};
 }
 
@@ -100,7 +102,7 @@ test('video error reason, time and count survive same-session reconnect and igno
 });
 
 test('queued updateend does not trim a source buffer while another append is updating',async()=>{
- const f=fixture({});await settle();const source=f.media[0].buffer,video=f.elements.get('video');let removals=0;
+ const f=fixture({});await settle();f.service={videoKeyframes:[0,5*90000],videoTimelineTicks:12*90000};await f.run('poll()');await settle();const source=f.media[0].buffer,video=f.elements.get('video');let removals=0;
  source.buffered={length:1,start:()=>0,end:()=>12};video.currentTime=10;
  source.remove=()=>{removals++;if(source.updating)throw new Error('SourceBuffer is still processing appendBuffer or remove');};
  source.updating=true;source.emit('updateend');
@@ -119,5 +121,90 @@ test('an active request with zero native frames is not labelled connected',async
  f.service={native:{present:true,authenticated:true,activated:true}};
  await f.run('poll()');await settle();
  assert.match(f.elements.get('#status').textContent,/waiting for native video/i);
+ f.run('end()');
+});
+
+test('stretched video maps edge and center touches across wide and tall viewports',async()=>{
+ const f=fixture();await settle();const video=f.elements.get('video');
+ for(const [width,height] of [[1920,700],[1280,720],[900,950]]){
+  video.getBoundingClientRect=()=>({left:15,top:55,width,height});
+  for(const [x,y] of [[0,0],[1,1],[.052,.92],[.5,.5]]){
+   const p=f.run(`coordinate({clientX:${15+x*width},clientY:${55+y*height}})`);
+   assert(p,`valid edge rejected in ${width}x${height}`);
+   assert(Math.abs(p.x-x)<1e-8);assert(Math.abs(p.y-y)<1e-8);
+  }
+  assert.equal(f.run('coordinate({clientX:14,clientY:55})'),null);
+ }
+ video.getBoundingClientRect=()=>({left:0,top:0,width:0,height:0});
+ assert.equal(f.run('coordinate({clientX:0,clientY:0})'),null);f.run('end()');
+});
+
+test('phone output never enables or connects browser audio on Start or native touch',async()=>{
+ const f=fixture({active:false,audioOutput:'phone'});await settle();
+ await f.elements.get('#start').onclick();await settle();
+ f.elements.get('video').onpointerdown({pointerId:1,clientX:100,clientY:100});await settle();
+ assert.equal(f.audioCalls.enable,0);assert.equal(f.audioCalls.connect.length,0);
+ assert.equal(f.elements.get('#sound').hidden,true);
+ assert.match(f.elements.get('#status').textContent,/phone.*Bluetooth/i);f.run('end()');
+});
+
+test('changing audio output performs stop-configure-start and keeps phone choice on reconnect',async()=>{
+ const f=fixture({audioOutput:'browser'});await settle();
+ f.elements.get('#audioOutput').value='phone';await f.elements.get('#audioOutput').onchange();await settle();
+ assert.deepEqual(f.requests.filter(r=>['/api/stop','/api/audio_output','/api/start'].includes(r.url)).map(r=>r.url),['/api/stop','/api/audio_output','/api/start']);
+ assert.equal(f.requests.find(r=>r.url==='/api/stop').value.session,'first');
+ assert.equal(f.elements.get('#audioOutput').value,'phone');
+ const connections=f.audioCalls.connect.length;
+ f.service={session:'new-session'};await f.run('poll()');await settle();
+ assert.equal(f.audioCalls.connect.length,connections);f.run('end()');
+});
+
+for(const active of [false,true])test(`Start and Stop cannot interrupt a pending audio change (${active?'active':'stopped'} session)`,async()=>{
+ const f=fixture({active,audioOutput:'browser'});await settle();
+ const heldURL=active?'/api/stop':'/api/audio_output';
+ f.run(`let releaseAudioChange,heldAudioChange=false;const originalFetch=fetch;
+  fetch=(url,options)=>{if(url===${JSON.stringify(heldURL)}&&!heldAudioChange){heldAudioChange=true;return new Promise(resolve=>{releaseAudioChange=()=>resolve(originalFetch(url,options));});}return originalFetch(url,options);};`);
+ f.elements.get('#audioOutput').value='phone';
+ const pending=f.elements.get('#audioOutput').onchange();await settle();
+ try{
+  const epoch=f.run('commandEpoch'),requests=f.requests.length;
+  await f.elements.get('#start').onclick();await f.elements.get('#stop').onclick();
+  assert.equal(f.run('commandEpoch'),epoch,'A competing button cancelled the output-change transaction');
+  assert.equal(f.requests.length,requests,'A competing native command was sent');
+  assert.equal(f.elements.get('#start').disabled,true);assert.equal(f.elements.get('#stop').disabled,true);
+ }finally{f.run('releaseAudioChange()');await pending;await settle();}
+ assert.equal(f.elements.get('#audioOutput').value,'phone');
+ assert.deepEqual(f.requests.filter(r=>['/api/stop','/api/audio_output','/api/start'].includes(r.url)).map(r=>r.url),active?['/api/stop','/api/audio_output','/api/start']:['/api/audio_output']);
+ f.run('end()');
+});
+
+test('a long GOP keeps its only decode chain instead of trimming through the playhead',async()=>{
+ const f=fixture();await settle();
+ f.service={videoKeyframes:[0],videoTimelineTicks:52*90000};await f.run('poll()');await settle();
+ const source=f.media[0].buffer,video=f.elements.get('video');let removals=0;
+ source.buffered={length:1,start:()=>0,end:()=>52};video.currentTime=51;source.remove=()=>{removals++;};
+ source.emit('updateend');
+ assert.equal(removals,0,'Removing inside the only GOP destroys current decoding');
+ assert.equal(f.run('closed'),false);f.run('end()');
+});
+
+test('buffer trimming preserves a confirmed IDR before the playhead with a one-tick margin',async()=>{
+ const f=fixture();await settle();
+ f.service={videoKeyframes:[0,30*90000,60*90000],videoTimelineTicks:61*90000};await f.run('poll()');await settle();
+ const source=f.media[0].buffer,video=f.elements.get('video'),removals=[];
+ source.buffered={length:1,start:()=>0,end:()=>61};video.currentTime=59;source.remove=(start,end)=>removals.push([start,end]);
+ source.emit('updateend');
+ assert.deepEqual(removals,[[0,(30*90000-1)/90000]]);
+ assert.equal(f.run('nativeStats.trims'),1);f.run('end()');
+});
+
+test('retained history without a safe random-access point fails boundedly after ninety seconds',async()=>{
+ const f=fixture();await settle();
+ f.service={videoKeyframes:[0],videoTimelineTicks:91*90000};await f.run('poll()');await settle();
+ const source=f.media[0].buffer,video=f.elements.get('video');let removals=0;
+ source.buffered={length:1,start:()=>0,end:()=>91};video.currentTime=90;source.remove=()=>{removals++;};
+ source.emit('updateend');
+ assert.equal(removals,0);assert.equal(f.run('closed'),true);
+ assert.match(f.run('nativeStats.lastVideoError'),/90 seconds|random.access/i);
  f.run('end()');
 });

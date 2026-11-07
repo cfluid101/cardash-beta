@@ -27,6 +27,6 @@ int main(int argc,char **argv){@autoreleasepool{
  Fetch *f=[Fetch new];f.output=@(argv[1]);f.result=1;
  NSURLSessionConfiguration *cfg=[NSURLSessionConfiguration ephemeralSessionConfiguration];cfg.timeoutIntervalForRequest=15;cfg.timeoutIntervalForResource=40;
  f.session=[NSURLSession sessionWithConfiguration:cfg delegate:f delegateQueue:NSOperationQueue.mainQueue];
- NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://github.com/shihabal3amri/DiPlay/releases/download/v0.2.22/DiPlay-0.2.22.apk"]];[request setValue:@"CarDash-V3-Native-Preview/3.0.0-beta.3" forHTTPHeaderField:@"User-Agent"];
+ NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://github.com/shihabal3amri/DiPlay/releases/download/v0.2.22/DiPlay-0.2.22.apk"]];[request setValue:@"CarDash-V3-Native-Preview/3.0.0-beta.4" forHTTPHeaderField:@"User-Agent"];
  [[f.session downloadTaskWithRequest:request]resume];while(!f.done)CFRunLoopRunInMode(kCFRunLoopDefaultMode,.05,false);[f.session invalidateAndCancel];return f.result;
 }}

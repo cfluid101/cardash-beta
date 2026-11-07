@@ -43,6 +43,7 @@ class AudioQueueTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.receiver = Receiver(SimpleNamespace(state=self.tmp.name, port=0, capture=None, helper='/unused'))
+        self.receiver.audio_output = 'browser'
         self.receiver.active = True
         self.receiver.generation = 'test-session'
         self.receiver.log = Mock()
