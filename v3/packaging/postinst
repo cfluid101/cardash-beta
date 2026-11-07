@@ -4,7 +4,7 @@ export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/
 mkdir -p /var/jb/var/lib/cardash-v3
 chown root:mobile /var/jb/var/lib/cardash-v3
 chmod 750 /var/jb/var/lib/cardash-v3
-printf 'CarDash V3 3.0.0 beta 5 HTTPS experiment 3 install\n' >> /var/jb/var/lib/cardash-v3/installation.log
+printf 'CarDash V3 3.0.0 beta 5 HTTPS3 open-testing revision 1 install\n' >> /var/jb/var/lib/cardash-v3/installation.log
 date -u >> /var/jb/var/lib/cardash-v3/installation.log
 launchctl bootout system/com.cfluid.cardash.v3 >/dev/null 2>&1 || true
 launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.cfluid.cardash.v3.plist >> /var/jb/var/lib/cardash-v3/installation.log 2>&1

@@ -26,7 +26,7 @@ int main(int argc,char **argv){@autoreleasepool{
  if(port<1024||port>65535||duration<0||key.length!=64||[key rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location!=NSNotFound)return 2;
  signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGHUP,stop);signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(20);pid_t parent=getppid();
  if(fcntl(STDIN_FILENO,F_SETFL,fcntl(STDIN_FILENO,F_GETFL)|O_NONBLOCK)<0)return 2;
- if(![CDSystem("hw.machine") isEqual:@"iPhone10,2"]||![CDSystem("kern.osversion") isEqual:@"20G75"]){CDEmit(@"wrong_target",@{});return 3;}
+ CDEmit(@"experimental_target",@{@"machine":CDSystem("hw.machine")?:@"",@"build":CDSystem("kern.osversion")?:@""});
  void *h=dlopen("/System/Library/PrivateFrameworks/CarKit.framework/CarKit",RTLD_NOW|RTLD_LOCAL);if(!h)return 4;
  Class hc=NSClassFromString(@"CARSessionRequestHost"),cc=NSClassFromString(@"CARSessionRequestClient"),sc=NSClassFromString(@"CARSessionStatus");
  NSString *selector=@"initWithDisplayName:wiredIPv6Addresses:wirelessIPv6Addresses:port:carplayWiFiUUID:deviceIdentifier:publicKey:sourceVersion:wiredCarPlaySimulator:";

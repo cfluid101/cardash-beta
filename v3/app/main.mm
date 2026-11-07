@@ -44,7 +44,7 @@ static NSString *Addresses(){
  UIStackView *stack=[[UIStackView alloc]init];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=14;stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
  [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],[scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:24],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-24],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-48]]];
  UILabel *title=[self label:@"CarDash V3" size:32];title.font=[UIFont systemFontOfSize:32 weight:UIFontWeightBold];[stack addArrangedSubview:title];
- [stack addArrangedSubview:[self label:@"Native CarPlay · 3.0.0 beta 5" size:17]];
+ [stack addArrangedSubview:[self label:@"Native CarPlay · HTTPS3 open-testing 1" size:17]];
  [stack addArrangedSubview:[self label:@"Native CarPlay video, touch and music/navigation audio. Sessions continue while connected. Microphone input, calls and Siri voice input are not supported in this beta." size:15]];
  self.status=[self label:@"Connecting to the V3 service…" size:16];[stack addArrangedSubview:self.status];
  self.prepare=[self button:@"Prepare CarPlay" action:@selector(prepareTapped)];[stack addArrangedSubview:self.prepare];
@@ -56,7 +56,7 @@ static NSString *Addresses(){
  [stack addArrangedSubview:[self button:@"Open local preview in Safari" action:@selector(safariTapped)]];
  [stack addArrangedSubview:[self button:@"Export diagnostic report" action:@selector(exportTapped)]];
  [stack addArrangedSubview:[self label:@"First setup downloads and checks the public DiPlay 0.2.22 experimental accessory identity (about 18 MB). It is not Apple certification. No setup code is required. Use a trusted hotspot: connected devices can control the preview." size:13]];
- [stack addArrangedSubview:[self label:@"Keep the phone unlocked for your first test. This beta is limited to iPhone 8 Plus, iOS 16.6 build 20G75, with a rootless jailbreak. Installed CarBridge may affect which apps appear. Your original CarDash app and settings remain separate. Reports stay on this phone until you choose to share them; video is not recorded by this release." size:13]];
+ [stack addArrangedSubview:[self label:@"Keep the phone unlocked for your first test. This experimental build permits other rootless arm64 models and iOS versions to install. Native operation has been verified only on iPhone 8 Plus, iOS 16.6 build 20G75. Incompatible native adapters will report unavailable; export diagnostics if a session cannot start. Installed CarBridge may affect which apps appear. Your original CarDash app and settings remain separate. Reports stay on this phone until you choose to share them; video is not recorded by this release." size:13]];
  self.timer=[NSTimer scheduledTimerWithTimeInterval:2 target:self selector:@selector(refresh) userInfo:nil repeats:YES];[self refresh];
 }
 - (void)show:(NSDictionary *)s {

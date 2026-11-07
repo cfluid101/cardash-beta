@@ -9,8 +9,8 @@ import os
 import sys
 
 def configure(limit=128):
-    if sys.platform != 'darwin' or os.uname().machine != 'iPhone10,2':
-        raise RuntimeError('V3 memory policy requires the supported iPhone 8 Plus')
+    if sys.platform != 'darwin':
+        raise RuntimeError('V3 memory policy requires Darwin memorystatus support')
     if os.getuid() != 0:
         raise RuntimeError('V3 service must run as root')
     libc=ctypes.CDLL(None,use_errno=True)

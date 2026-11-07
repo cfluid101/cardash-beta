@@ -1,3 +1,13 @@
+# HTTPS3 open-testing revision 1 — validation
+
+Package: `3.0.0~beta.5+https.3.open.1` (November 7, 2026). This revision removes the package firmware dependency and explicit installer, session-helper and backend model/build allowlists. The companion text identifies experimental testing. All bundled arm64 binaries target iOS 16.0, matching the existing rootless crypto link input's minimum; this is not a tested compatibility range. Rootless layout, runtime dependencies, native framework/ABI/instruction guards, and memory-policy readback remain required.
+
+150 Python/native/package tests and 94 JavaScript tests passed (244 total). Checks exercise the shipped preinstall script against an isolated rootless layout, confirm the firmware dependency is absent, and simulate memory-policy acceptance on additional iPhone/iPad model identifiers while retaining kernel-error/readback checks. These simulations are not physical-device compatibility tests. The build and strict code-signature checks pass. Browser assets and native adapter implementation/identity checks are unchanged.
+
+No device was connected to, installed on, or tested for this revision. Existing iPhone 8 Plus/iOS 16.6 trials below describe the preceding package. Other models and iOS versions, including 17.6.1, remain unverified. An unmatched native adapter still prevents a session from starting, with an exportable error; it does not blindly patch an unknown framework. The original tested HTTPS3 package and its source are preserved in the rollback archive at the same release.
+
+# Historical HTTPS3 validation
+
 # CarDash V3 beta 5 HTTPS3 — validation
 
 Package: `3.0.0~beta.5+https.3`. Use the matching [HTTPS3 viewer](https://cfluid101.github.io/cardash-beta/option1/?v=https3). Media and controls remain local between the browser and iPhone; GitHub serves static files only.

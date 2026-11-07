@@ -1,3 +1,5 @@
+> Historical design plan. HTTPS3 open-testing revision 1 removes the installer/helper/backend model/build allowlists. Current behavior and remaining native identity checks are documented in README.md and BUILD.md.
+
 # V3 native preview implementation
 
 User authorized fixing the launcher, re-verifying native CarPlay and shipping a beta to testers. Original and V2 files/state are protected.

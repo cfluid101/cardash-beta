@@ -4,6 +4,8 @@ from pathlib import Path
 import unittest
 import plistlib
 import re
+import subprocess
+import tempfile
 ROOT=Path(__file__).resolve().parents[2]
 class PackageTest(unittest.TestCase):
  def test_rootless_payload_ownership_paths_and_credentials(self):
@@ -11,6 +13,8 @@ class PackageTest(unittest.TestCase):
   while at<len(data):
    header=data[at:at+60];n=int(header[48:58]);name=header[:16].decode().strip().rstrip('/');members[name]=data[at+60:at+60+n];at+=60+n+(n%2)
   with tarfile.open(fileobj=io.BytesIO(members['data.tar.xz'])) as tar:
+   app=plistlib.loads(tar.extractfile('./var/jb/Applications/CarDashV3.app/Info.plist').read())
+   self.assertEqual(app['MinimumOSVersion'],'16.0')
    job=plistlib.loads(tar.extractfile('./var/jb/Library/LaunchDaemons/com.cfluid.cardash.v3.plist').read())
    self.assertEqual(job['JetsamProperties']['MemoryLimit'],128)
    self.assertEqual(job['ProcessType'],'Interactive')
@@ -31,6 +35,18 @@ class PackageTest(unittest.TestCase):
     self.assertFalse(n.endswith(('.pk8','.p7b','.apk')) or n.endswith('/identity.json'),n)
   with tarfile.open(fileobj=io.BytesIO(members['control.tar.xz'])) as tar:
    control=tar.extractfile('./control').read().decode();self.assertIn('Package: com.cfluid.cardash.v3\n',control)
+   self.assertNotIn('firmware',re.search(r'^Depends: (.+)$',control,re.M).group(1))
+   self.assertIn('Architecture: iphoneos-arm64\n',control)
+   preinst=tar.extractfile('./preinst').read().decode()
+   self.assertNotIn('sysctl',preinst)
+   with tempfile.TemporaryDirectory() as tmp:
+    # Exercise the shipped installer in an isolated simulated rootless layout.
+    script=preinst.replace('/var/jb',tmp+'/jb')
+    rejected=subprocess.run(['/bin/sh','-c',script],capture_output=True,text=True)
+    self.assertNotEqual(rejected.returncode,0);self.assertIn('rootless jailbreak',rejected.stderr)
+    Path(tmp,'jb').mkdir()
+    accepted=subprocess.run(['/bin/sh','-c',script],capture_output=True,text=True)
+    self.assertEqual(accepted.returncode,0,accepted.stderr)
    for name in ('preinst','postinst','prerm','postrm'):
     script=tar.extractfile('./'+name).read().decode();self.assertNotIn('killall',script);self.assertNotIn('com.cfluid.cardash.v2',script);self.assertNotIn('sbreload',script)
 if __name__=='__main__':unittest.main()
