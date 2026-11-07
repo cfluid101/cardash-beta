@@ -1,4 +1,34 @@
-# CarDash V3 beta 5 HTTPS2 — validation
+# CarDash V3 beta 5 HTTPS3 — validation
+
+Package: `3.0.0~beta.5+https.3`. Use the matching [HTTPS3 viewer](https://cfluid101.github.io/cardash-beta/option1/?v=https3). Media and controls remain local between the browser and iPhone; GitHub serves static files only.
+
+## Findings and corrections
+
+The reviewed HTTPS2 car log window (November 7, 09:30–09:50 PST) contained five native sessions, six viewer byte-limit drops near 2 MiB, fourteen video drain failures, and four heartbeat-expiry stops. Request delays reached seconds while decoder queues were usually empty. No viewport-change stop occurred in that window. The final timeout may include leaving the car; the logs contain no RF measurements and cannot attribute every failure to signal strength.
+
+The internal wired/loopback transport gave iOS a 17.5 Mbps encoder allowance, unrelated to the real browser link. A display-scoped adapter now starts at 3 Mbps, reduces its allowance when the browser reports sustained delay, and increases cautiously after recovery. It preserves display geometry, the native session and selected audio policy. The applied allowance is not a promise of exact encoded bitrate. Exact firmware identity, instruction and display-ownership guards prevent changes to another display or unsupported firmware.
+
+A slow viewer no longer blocks native ingestion indefinitely. Continuous canvas viewers avoid the periodic encoder reset retained for the legacy player. Display recovery resumes after the rolling three-per-minute cooldown instead of becoming permanently blocked; missing first frames and decoder-capacity stalls are also recoverable. A capability flag prevents the new renderer header from breaking older backends.
+
+Device output keeps the phone's existing speaker/Bluetooth policy. Native helper ownership is published and removed together, so an obsolete helper cannot revoke a replacement's audio lease. Removal during an initial pending ownership claim cancels it. Browser audio remains optional. This fix does not select a particular Bluetooth device.
+
+## Automated verification
+
+148 Python/native/package tests and 94 JavaScript tests passed (242 total). Regressions cover the source budget and leases, full-rate feedback, native audio ownership races, out-of-order lease reads, helper lifetime, bounded slow-viewer behavior, decoder stalls, zero-first-frame recovery, rolling cooldown, old-backend compatibility, and distinguishing an idle native screen from missing newer pixels, including timestamp jumps when an idle source resumes. The arm64 build uses warnings-as-errors and strict signature checks. No original project or saved-state file is part of the package payload.
+
+## Connected-device verification
+
+A 668.57-second scripted trial used the supported physical iPhone and an owned Mac Chrome profile. A loopback proxy forwarded directly to the phone's USB-network interface and changed the response-body limit on the same open stream: 4 → 2 → 1 → 4 → 2 → 4 Mbps. The second 2 Mbps phase also applied 4× browser CPU slowdown. Proxy self-testing independently measured approximately 3.89 Mbps → 1.00 Mbps within a single response; this avoids CDP's inability to reliably reshape an already-open video response.
+
+That trial retained one native generation and one display connection, with no video error, automatic display recovery, input error or heartbeat error. At 1 Mbps, the native budget fell from 3 Mbps to 1.2675 Mbps; sampled timeline deficit peaked at 1,000 ms, with a 66.67 ms median. It returned near the live timeline without a native restart. The budget subsequently rose to 3 Mbps. Input-request RTT during the 1 Mbps phase had a sampled maximum of 126 ms. These numbers measure the controlled proxy/USB path and approximate media-timeline backlog, not touch-to-visible-pixel latency in a Tesla.
+
+Device-output policy remained active throughout the sampled trial, and independent route probes returned Speaker. The phone remained unlocked. This is not a new locked-phone, audible-quality, Bluetooth or steering-wheel test.
+
+A separate three-second proxy termination closed real streaming sockets. The browser retried automatically and had 118 newly decoded frames by the 8.5-second checkpoint, with the same native generation and active device-output policy. Subsequent idle-grid observation exposed a false watchdog recovery when iOS itself stopped encoding unchanged pixels. The final watchdog now requires missing newer native pixels, or absence of the first frame, before treating age as a failed stream. The 668.57-second bandwidth run preceded this last browser-only correction; its native/governor code is unchanged. After the final browser correction, a direct USB-network trial stayed on one display connection through 85.4 seconds of idle app-grid display, including native timestamp advancement, with no recovery. A visible tap then opened the native Now Playing screen. Independent MediaRemote state subsequently confirmed playback on Speaker with device-output policy active. The test proxy's separate 30-second idle read timeout was excluded from this final idle check.
+
+The corrected watchdog requires a persistent meaningful native/display deficit, grants delivery time when the source resumes, resets persistence on visibility changes, and recognizes catch-up only against a fresh status reference. A zero-first-frame deadline remains independent. Bounded five-second video-rate logs now also record applied audio-policy bits, helping distinguish the selected UI option from actual native policy in later car reports. USB-network measurements do not establish Tesla radio behavior or physical screen latency. Actual Tesla hotspot endurance, Bluetooth/steering-wheel regression, and long-duration thermal/battery behavior require a vehicle trial.
+
+# Historical HTTPS2 validation
 
 ## HTTPS2 candidate — validation
 

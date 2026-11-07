@@ -71,6 +71,18 @@ class VideoBurstTest(unittest.IsolatedAsyncioTestCase):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
 
+    async def test_stalled_viewer_cannot_stop_native_ingress(self):
+        with tempfile.TemporaryDirectory() as folder:
+            r=Receiver(SimpleNamespace(state=folder,port=0,capture=None,helper='/unused'))
+            r.active=True;r.generation='stalled';r.screen_key=bytes(range(32));r.stop=AsyncMock()
+            r.configure=lambda config:setattr(r,'muxer',SimpleNamespace(base=0,fragment=lambda *args:b'frame'))
+            r.initial=b'init';q=asyncio.Queue(maxsize=90)
+            state={'bytes':0,'closed':False,'session':r.generation,'ready':True};r.viewers[q]=state
+            reader=asyncio.StreamReader();reader.feed_data(burst(r.screen_key,220));reader.feed_eof()
+            writer=SimpleNamespace(close=lambda:None)
+            await asyncio.wait_for(r.video_client(reader,writer),.8)
+            self.assertEqual(r.frames,220);self.assertTrue(state['closed'])
+
     async def test_budget_preserves_partial_packet_and_cipher_counter(self):
         key = bytes(range(32))
         frames = []

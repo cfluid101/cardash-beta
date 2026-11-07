@@ -55,13 +55,17 @@ class AudioLease:
         self.write(b'com.cfluid.cardash.v3.audio.lease',0)
 
 
-def audio_route_status(probe=None,alive=None):
+def audio_route_status(probe=None,alive=None,state_probe=None):
     try:
         value=(probe or (lambda:notification_state(b'com.cfluid.cardash.v3.audio.ready')))()
         pid,code=value>>8,value&255
         if pid<=1 or code!=1:raise ValueError('audio routing adapter unavailable (status '+str(code)+'); reinstall this beta or select Browser audio')
         (alive or (lambda pid:os.kill(pid,0)))(pid)
-        return {'ready':True,'pid':pid,'error':''}
+        try:
+            state=(state_probe or (lambda:notification_state(b'com.cfluid.cardash.v3.audio.state')))()
+            bits=state&255 if state>>16==pid else 0
+        except (OSError,AttributeError):bits=0
+        return {'ready':True,'pid':pid,'error':'','deviceOutputActive':bool(bits&4),'leaseValid':bool(bits&8),'ownHost':bool(bits&2)}
     except (OSError,ValueError,AttributeError) as error:return {'ready':False,'error':str(error)}
 
 

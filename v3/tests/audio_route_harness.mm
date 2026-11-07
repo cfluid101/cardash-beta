@@ -16,6 +16,7 @@ static uint64_t AdvanceDuringLiveness=0;
 static std::atomic<unsigned> LeaseReads{0};
 static uint8_t PublishedBits=255;
 static unsigned StateChanges=0;
+static bool NewHostDuringRead=false,RemoveHostDuringRead=false;
 static uint64_t AudioNowMS() {
     if (RequireLockedClock) {
         // The native setter must snapshot the cached lease and sample time in
@@ -27,6 +28,8 @@ static uint64_t AudioNowMS() {
 static bool ReadAudioNotificationValues(uint64_t &request,uint64_t &stamp,uint64_t &again) {
     if (CheckReadMutex) {assert(pthread_mutex_trylock(&AudioMutex)==0);pthread_mutex_unlock(&AudioMutex);}
     LeaseReads++;
+    if (RemoveHostDuringRead) {RemoveHostDuringRead=false;CDV3AudioHost((void *)1,false);}
+    if (NewHostDuringRead) {NewHostDuringRead=false;CDV3AudioHost((void *)2,true);}
     request=MockLease.request;
     if (RenewDuringRead) {MockLease.stamp=MockLease.now+2;MockLease.now+=3;RenewDuringRead=false;}
     stamp=MockLease.stamp;again=MockLease.coherent?request:request^1;
@@ -44,7 +47,7 @@ static void PublishAudioState(uint8_t bits) {
 static void MockSetter(bool value) {MockFlag=value?1:0;}
 static void Reset(bool initial=false) {
     MockFlag=initial;AudioFlag=&MockFlag;NativeAudioSetter=MockSetter;
-    AudioOwnHost=false;AudioForcing=false;AudioNativeWanted=false;
+    AudioOwnHost=false;AudioForcing=false;AudioNativeWanted=false;AudioHostHelper=nullptr;AudioPendingHelper=nullptr;AudioPendingOrder=0;
     AudioCachedLease={};CheckReadMutex=true;LeaseReads=0;
     RequireLockedClock=false;RenewDuringRead=false;AdvanceDuringLiveness=0;
     PublishedBits=255;StateChanges=0;
@@ -81,26 +84,26 @@ int main() {
     }
     Reset();AudioTick();assert(!MockFlag && !AudioForcing); // live request alone has no authority
     assert(PublishedBits==8 && StateChanges==1);AudioTick();assert(StateChanges==1);
-    CDV3AudioHost(true);assert(MockFlag && AudioForcing);
+    CDV3AudioHost((void *)1,true);assert(MockFlag && AudioForcing);
     AudioTick();assert(PublishedBits==15 && StateChanges==2);
     unsigned before=LeaseReads;AudioSetter(false);assert(LeaseReads==before); // hook must never invoke notify
     AudioSetter(false);assert(MockFlag && !AudioNativeWanted);
-    CDV3AudioHost(false);assert(!MockFlag && !AudioForcing);
+    CDV3AudioHost((void *)1,false);assert(!MockFlag && !AudioForcing);
     AudioTick();assert(!MockFlag); // fresh heartbeat cannot override foreign host
     assert(PublishedBits==8);
-    Reset(true);CDV3AudioHost(true);MockLease.request=0;AudioTick();assert(MockFlag && !AudioForcing);
-    Reset();CDV3AudioHost(true);AudioSetter(true);MockLease.request=0;AudioTick();assert(MockFlag && !AudioForcing);
-    Reset(true);CDV3AudioHost(true);AudioSetter(false);MockLease.alive=false;AudioTick();assert(!MockFlag && !AudioForcing);
-    Reset();CDV3AudioHost(true);MockLease.now=18000;AudioTick();assert(MockFlag); // inclusive 8s boundary
+    Reset(true);CDV3AudioHost((void *)1,true);MockLease.request=0;AudioTick();assert(MockFlag && !AudioForcing);
+    Reset();CDV3AudioHost((void *)1,true);AudioSetter(true);MockLease.request=0;AudioTick();assert(MockFlag && !AudioForcing);
+    Reset(true);CDV3AudioHost((void *)1,true);AudioSetter(false);MockLease.alive=false;AudioTick();assert(!MockFlag && !AudioForcing);
+    Reset();CDV3AudioHost((void *)1,true);MockLease.now=18000;AudioTick();assert(MockFlag); // inclusive 8s boundary
     MockLease.now=18001;AudioTick();assert(!MockFlag && !AudioForcing);
     MockLease.stamp=18001;MockLease.now=18002;AudioTick();assert(!MockFlag && !AudioOwnHost);
-    CDV3AudioHost(true);assert(MockFlag && AudioForcing); // new session needs fresh identity observation
-    Reset();CDV3AudioHost(true);RenewDuringRead=true;AudioTick();
+    CDV3AudioHost((void *)1,true);assert(MockFlag && AudioForcing); // new session needs fresh identity observation
+    Reset();CDV3AudioHost((void *)1,true);RenewDuringRead=true;AudioTick();
     assert(AudioCachedLease.stamp==10003 && AudioCachedLease.now==10004);
     assert(MockFlag && AudioForcing && AudioOwnHost && PublishedBits==15); // renew during read is not future
-    Reset();CDV3AudioHost(true);AdvanceDuringLiveness=8001;AudioTick();
+    Reset();CDV3AudioHost((void *)1,true);AdvanceDuringLiveness=8001;AudioTick();
     assert(!MockFlag && !AudioForcing && !AudioOwnHost); // expiry during read is still real expiry
-    Reset();CDV3AudioHost(true);
+    Reset();CDV3AudioHost((void *)1,true);
     // Simulate a monitor publishing a newer cached heartbeat while the setter
     // would be waiting for its lock. Clock instrumentation rejects the old
     // pre-lock sampling order even when thread scheduling would hide the race.
@@ -109,8 +112,22 @@ int main() {
     assert(LeaseReads==before && MockFlag && AudioForcing && AudioOwnHost);
     MockLease.now=18004;RequireLockedClock=true;AudioSetter(false);RequireLockedClock=false;
     assert(!MockFlag && !AudioForcing && !AudioOwnHost); // cached lease still expires without IPC
-    Reset();CDV3AudioHost(true);MockLease.now=18001;
+    Reset();CDV3AudioHost((void *)1,true);MockLease.now=18001;
     before=LeaseReads;AudioSetter(false);assert(LeaseReads==before && !MockFlag && !AudioForcing); // cached lease ages without notify
+    Reset();CDV3AudioHost((void *)1,true);CDV3AudioHost((void *)2,false);
+    assert(MockFlag && AudioOwnHost); // unrelated helper cannot revoke our lease
+    Reset();RemoveHostDuringRead=true;CDV3AudioHost((void *)1,true);
+    assert(!MockFlag && !AudioOwnHost); // removal cancels an initial ownership read before publication
+    Reset();CDV3AudioHost((void *)1,true);RemoveHostDuringRead=true;CDV3AudioHost((void *)2,true);
+    assert(MockFlag && AudioOwnHost); // retiring helper1 cannot cancel helper2's pending claim
+    CDV3AudioHost((void *)1,false);assert(MockFlag);CDV3AudioHost((void *)2,false);assert(!MockFlag);
+    Reset();NewHostDuringRead=true;CDV3AudioHost((void *)1,true);
+    CDV3AudioHost((void *)1,false);assert(MockFlag && AudioOwnHost); // late old publish must not replace helper2
+    CDV3AudioHost((void *)2,false);assert(!MockFlag && !AudioOwnHost);
+    Reset();
+    AudioLease older={1,10000,10005,true,true,1},newer={1,10003,10004,true,true,2};
+    pthread_mutex_lock(&AudioMutex);CacheAudioLeaseLocked(newer);CacheAudioLeaseLocked(older);pthread_mutex_unlock(&AudioMutex);
+    assert(AudioCachedLease.stamp==10003); // completion time cannot order overlapping snapshots
     for (unsigned invalid=0;invalid<6;invalid++) {
         Reset();
         if (invalid==0) MockLease.stamp=0;
@@ -119,17 +136,17 @@ int main() {
         if (invalid==3) MockLease.request=((uint64_t)4242<<8)|2;
         if (invalid==4) MockLease.request=((uint64_t)1<<8)|1;
         if (invalid==5) MockLease.request=((uint64_t)INT_MAX+1)<<8|1;
-        CDV3AudioHost(true);assert(!MockFlag && !AudioForcing);
+        CDV3AudioHost((void *)1,true);assert(!MockFlag && !AudioForcing);
     }
-    Reset(true);CDV3AudioHost(true);MockFlag=0;AudioTick();assert(MockFlag && !AudioNativeWanted);
+    Reset(true);CDV3AudioHost((void *)1,true);MockFlag=0;AudioTick();assert(MockFlag && !AudioNativeWanted);
     MockLease.request=0;AudioTick();assert(!MockFlag); // native direct write preserved on exit
-    Reset();AudioFlag=nullptr;CDV3AudioHost(true);assert(!MockFlag && !AudioForcing);
-    Reset();NativeAudioSetter=nullptr;CDV3AudioHost(true);assert(!MockFlag && !AudioForcing);
-    Reset();CDV3AudioHost(true);CheckReadMutex=false; // other threads can hold the mutex during an outside read
+    Reset();AudioFlag=nullptr;CDV3AudioHost((void *)1,true);assert(!MockFlag && !AudioForcing);
+    Reset();NativeAudioSetter=nullptr;CDV3AudioHost((void *)1,true);assert(!MockFlag && !AudioForcing);
+    Reset();CDV3AudioHost((void *)1,true);CheckReadMutex=false; // other threads can hold the mutex during an outside read
     std::thread setters([]{for (int i=0;i<20000;i++) AudioSetter(i&1);});
     std::thread monitor([]{for (int i=0;i<20000;i++) AudioTick();});
-    std::thread hosts([]{for (int i=0;i<20000;i++) CDV3AudioHost(i&1);});
+    std::thread hosts([]{for (int i=0;i<20000;i++) CDV3AudioHost((void *)1,i&1);});
     setters.join();monitor.join();hosts.join();
-    AudioSetter(false);CDV3AudioHost(false);assert(!MockFlag && !AudioForcing);
+    AudioSetter(false);CDV3AudioHost((void *)1,false);assert(!MockFlag && !AudioForcing);
     puts("Audio scope, intent restoration, lease expiry, invalid-request rejection, direct-write and concurrent-callback checks passed");
 }

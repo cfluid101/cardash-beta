@@ -64,6 +64,18 @@ class AudioOutputTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.r.stop(generation='new'))
         self.r.audio_lease.clear.assert_called_once_with()
 
+    async def test_missing_video_adapter_fails_before_launch(self):
+        self.r.ready=lambda:True
+        with patch('server.transport_status',return_value={'ready':True,'pid':44}), patch('server.audio_route_status',return_value={'ready':True}), patch('server.budget_status',return_value={'ready':False}), patch('server.asyncio.create_subprocess_exec',new_callable=AsyncMock) as launch:
+            with self.assertRaisesRegex(ValueError,'Video bandwidth'):await self.r.start()
+            launch.assert_not_called()
+
+    async def test_video_lease_clear_failure_cannot_skip_audio_release(self):
+        self.r.audio_lease=Mock();self.r.video_lease=Mock();self.r.video_lease.clear.side_effect=OSError('video clear failed')
+        self.r.active=True;self.r.generation='new'
+        await self.r.stop()
+        self.r.audio_lease.clear.assert_called_once_with()
+
     async def test_phone_start_fails_before_launch_when_adapter_is_missing(self):
         self.r.ready=lambda:True
         with patch('server.transport_status',return_value={'ready':True}), patch('server.audio_route_status',return_value={'ready':False,'error':'Audio adapter unavailable'}), patch('server.asyncio.create_subprocess_exec',new_callable=AsyncMock) as launch:
@@ -74,7 +86,7 @@ class AudioOutputTest(unittest.IsolatedAsyncioTestCase):
     async def test_failed_native_launch_cleans_capture_even_if_lease_clear_fails(self):
         self.r.ready=lambda:True;self.r.args.capture=self.tmp.name
         self.r.audio_lease=Mock();self.r.audio_lease.clear.side_effect=OSError('notify clear failed')
-        with patch('server.transport_status',return_value={'ready':True}), patch('server.audio_route_status',return_value={'ready':True}), patch('server.Path.read_bytes',return_value=b'cert'), patch('server.CERT_SHA256',__import__('hashlib').sha256(b'cert').hexdigest()), patch('server.crypto.certificate_matches',return_value=True), patch('server.asyncio.create_subprocess_exec',side_effect=OSError('launch failed')):
+        with patch('server.budget_status',return_value={'ready':True}), patch('server.transport_status',return_value={'ready':True}), patch('server.audio_route_status',return_value={'ready':True}), patch('server.Path.read_bytes',return_value=b'cert'), patch('server.CERT_SHA256',__import__('hashlib').sha256(b'cert').hexdigest()), patch('server.crypto.certificate_matches',return_value=True), patch('server.asyncio.create_subprocess_exec',side_effect=OSError('launch failed')):
             with self.assertRaisesRegex(OSError,'launch failed'):await self.r.start()
         self.assertIsNone(self.r.capture);self.assertIsNone(self.r.generation);self.assertFalse(self.r.active)
 

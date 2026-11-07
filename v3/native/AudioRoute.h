@@ -5,8 +5,8 @@
 extern "C" {
 #endif
 // Call with the result of the exact APTransport host-identity check before
-// invoking the native update. A foreign/removed host immediately releases audio.
-void CDV3AudioHost(bool own);
+// invoking the native update. Removal can revoke only that helper's ownership.
+void CDV3AudioHost(const void *helper,bool own);
 #ifdef __cplusplus
 }
 #endif

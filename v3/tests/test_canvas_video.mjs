@@ -116,7 +116,7 @@ test('a coalesced 72-frame muxer burst survives delayed support and repeated dec
 test('decoder capacity timeout produces one terminal fallback error instead of waiting for an IDR',async()=>{
  const f=fixture(),player=await configured(f);await player.push(key);const decoder=f.decoders[0];decoder.decodeQueueSize=8;
  const pending=player.push(delta);await settle();f.fireTimers(2000);await pending;
- assert.equal(player.stats.closed,true);assert.equal(f.errors.length,1);assert.match(f.errors[0].message,/stalled.*2 seconds/);assert.equal(decoder.listeners.get('dequeue').size,0);assert.equal(f.timers.size,0);
+ assert.equal(player.stats.closed,true);assert.equal(f.errors.length,1);assert.match(f.errors[0].message,/stalled.*2 seconds/);assert.equal(f.errors[0].code,'DECODER_STALLED');assert.equal(decoder.listeners.get('dequeue').size,0);assert.equal(f.timers.size,0);
  decoder.drain();await player.push(key2);assert.equal(f.errors.length,1);assert.equal(f.chunks.length,1);
 });
 

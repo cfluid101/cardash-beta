@@ -13,6 +13,11 @@
 @implementation CARSessionRequestHost
 @end
 
+static bool audioOwn=false;
+static unsigned audioCalls=0;
+static const void *audioHelper=nullptr;
+extern "C" void CDV3AudioHost(const void *helper,bool own) {audioCalls++;if(own||audioHelper==helper){audioHelper=own?helper:nullptr;audioOwn=own;}}
+
 static bool scoped, throwUpdate, cancelHost, consumeHelper, helperDestroyed;
 static unsigned updates, events;
 @interface HarnessHelper : NSObject
@@ -84,7 +89,14 @@ int main() { @autoreleasepool {
     throwUpdate=true; bool caught=false;
     @try {Update(helper);} @catch(NSException *e){(void)e;caught=true;}
     assert(caught);restored();throwUpdate=false;
-    scoped=false;host.displayName=@"Another Car";Update(helper);restored();
+    scoped=false;
+    auto foreign=[HarnessHelper new];memcpy(foreign.storage.mutableBytes,state,0x200);
+    auto foreignHost=[CARSessionRequestHost new];foreignHost.displayName=@"Another Car";
+    *(void **)((uint8_t *)foreign.storage.mutableBytes+0xa8)=(__bridge void *)foreignHost;
+    const auto audioBefore=audioCalls;Update((__bridge CFTypeRef)foreign);
+    assert(audioOwn && audioCalls==audioBefore+1); // unrelated helper cannot cancel our device-audio lease
+    *(uint32_t *)((uint8_t *)foreign.storage.mutableBytes+0xb8)=1;
+    host.displayName=@"Another Car";Update(helper);restored();assert(!audioOwn);
     host.displayName=@"CarDash V3";host.port=62001;Update(helper);restored();
     host.port=62000;host.wiredIPv6Addresses=@[@"::2"];Update(helper);restored();
     host.wiredIPv6Addresses=@[@"::1"];state[0xa0]=0;Update(helper);restored();state[0xa0]=1;
@@ -94,16 +106,16 @@ int main() { @autoreleasepool {
     scoped=false;host.displayName=@"Another Car";Event(block);assert(!*(void **)(state+0xa8));
     host.displayName=@"CarDash V3";*(void **)(state+0xa8)=(__bridge void *)host;
     scoped=true;cancelHost=true;*(uint32_t *)(state+0xb8)=1;Event(block);
-    assert(!*(void **)(state+0xa8) && *(uint32_t *)(state+0xb8)==0);
+    assert(!*(void **)(state+0xa8) && *(uint32_t *)(state+0xb8)==0);assert(!audioOwn);
     cancelHost=false;scoped=false;*(int32_t *)(block+0x40)=5;*(uint32_t *)(state+0xb8)=2;
     Event(block);assert(*(uint32_t *)(state+0xb8)==2);
-    assert(updates==7 && events==4);
+    assert(updates==8 && events==4);
     puts("10 native lifecycle cases passed");
     // The callback owns the final native helper reference, as in the observed
     // APTransport block. No further original update sets the transport back.
     *(void **)(state+0xa8)=(__bridge void *)host;
     *(int32_t *)(block+0x40)=4;*(uint32_t *)(state+0xb8)=1;
     consumeHelper=true;Event(block);
-    assert(helperDestroyed && updates==7 && events==5);
+    assert(helperDestroyed && updates==8 && events==5);
     puts("Final-reference callback lifetime case passed");
 } }

@@ -6,11 +6,13 @@
 #include <cstddef>
 #include <climits>
 #include <pthread.h>
+#include <atomic>
 
 namespace {
 struct AudioLease {
     uint64_t request=0, stamp=0, now=0;
     bool alive=false, coherent=false;
+    uint64_t readOrder=0;
 };
 static bool ReadAudioNotificationValues(uint64_t &request,uint64_t &stamp,uint64_t &again);
 static bool AudioPIDAlive(uint64_t pid);
@@ -21,9 +23,12 @@ static volatile uint8_t *AudioFlag=nullptr;
 static void (*NativeAudioSetter)(bool)=nullptr;
 static bool AudioOwnHost=false, AudioForcing=false, AudioNativeWanted=false;
 static AudioLease AudioCachedLease;
+static std::atomic<uint64_t> AudioReadOrder{0};
+static uint64_t AudioPendingOrder=0;
+static const void *AudioHostHelper=nullptr,*AudioPendingHelper=nullptr;
 
 static AudioLease ReadAudioLease() {
-    AudioLease s;
+    AudioLease s;s.readOrder=++AudioReadOrder;
     uint64_t again=0;
     if (ReadAudioNotificationValues(s.request,s.stamp,again)) {
         s.coherent=s.request==again;
@@ -37,7 +42,7 @@ static AudioLease ReadAudioLease() {
 }
 static void CacheAudioLeaseLocked(const AudioLease &s) {
     // Notification reads run outside our mutex and can finish out of order.
-    if (s.now>=AudioCachedLease.now) AudioCachedLease=s;
+    if (s.readOrder>=AudioCachedLease.readOrder) AudioCachedLease=s;
 }
 static AudioLease CurrentAudioLeaseLocked() {
     AudioLease s=AudioCachedLease;
@@ -68,7 +73,7 @@ static void RefreshAudioLocked(const AudioLease &s) {
     } else if (AudioForcing) {
         NativeAudioSetter(AudioNativeWanted);
         AudioForcing=false;
-        AudioOwnHost=false; // a new lease requires a fresh native host observation
+        AudioOwnHost=false;AudioHostHelper=nullptr; // renewal needs a fresh native host observation
     }
 }
 static void AudioSetter(bool wanted) {
@@ -96,13 +101,28 @@ static void AudioTick() {
 }
 }
 
-extern "C" void CDV3AudioHost(bool own) {
-    // Foreign-host release does not need a notification lookup.
-    AudioLease s=own?ReadAudioLease():AudioLease{};
+extern "C" void CDV3AudioHost(const void *helper,bool own) {
+    if (!helper) return;
+    // Reserve ownership under the same mutex as publication, before reading
+    // notifications. Removal can cancel an unpublished claim; an unrelated
+    // retiring helper cannot cancel the replacement's pending claim.
     pthread_mutex_lock(&AudioMutex);
-    AudioOwnHost=own;
-    if (own) CacheAudioLeaseLocked(s);
-    RefreshAudioLocked(CurrentAudioLeaseLocked());
+    if (!own) {
+        if (AudioPendingHelper==helper) AudioPendingHelper=nullptr;
+        if (AudioHostHelper==helper) {
+            AudioHostHelper=nullptr;AudioOwnHost=false;
+            RefreshAudioLocked(CurrentAudioLeaseLocked());
+        }
+        pthread_mutex_unlock(&AudioMutex);return;
+    }
+    uint64_t order=++AudioPendingOrder;AudioPendingHelper=helper;
+    pthread_mutex_unlock(&AudioMutex);
+    AudioLease s=ReadAudioLease(); // no ownership/routing mutex held across IPC
+    pthread_mutex_lock(&AudioMutex);
+    if (AudioPendingHelper==helper && AudioPendingOrder==order) {
+        AudioPendingHelper=nullptr;AudioHostHelper=helper;AudioOwnHost=true;
+        CacheAudioLeaseLocked(s);RefreshAudioLocked(CurrentAudioLeaseLocked());
+    }
     pthread_mutex_unlock(&AudioMutex);
 }
 

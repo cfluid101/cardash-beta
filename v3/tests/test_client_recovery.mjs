@@ -10,9 +10,9 @@ class Events{
  removeEventListener(type,fn){this.events.set(type,(this.events.get(type)||[]).filter(f=>f!==fn));}
  emit(type,...args){for(const fn of [...(this.events.get(type)||[])])fn(...args);}
 }
-function fixture({muted=false,audioError='',session='first',autoOpen=true,active=true,audioOutput='browser',canvasMode=null,hosted=false}={}){
+function fixture({muted=false,audioError='',session='first',autoOpen=true,active=true,audioOutput='browser',canvasMode=null,hosted=false,continuousDecode=false}={}){
  const media=[],streams=[],videoCallbacks=[],touches=[],requests=[],fetchCalls=[],adapterCalls=[],connectionCalls=[],events=new Map(),urls=new Map(),elements=new Map();
- let service={active,identityReady:true,session:active?session:null,sessionSeconds:1,error:'',codec:'avc1.64001f',videoConnected:active,audioOutput};
+ let service={active,videoContinuousDecode:continuousDecode,identityReady:true,session:active?session:null,sessionSeconds:1,error:'',codec:'avc1.64001f',videoConnected:active,audioOutput};
  const renderers=[],canvases=[],images=[],bitmaps=[];let bitmapDeferred=null;
  let failAudio=audioError,failEnable='',deferTouch=null;
  const classSet=new Set(),body={classList:{add(v){classSet.add(v);},remove(v){classSet.delete(v);}}};
@@ -42,7 +42,7 @@ function fixture({muted=false,audioError='',session='first',autoOpen=true,active
   if(url==='/api/touch'){touches.push(value);if(deferTouch){const current=deferTouch;deferTouch=null;return current;}}
   return {ok:true,json:async()=>({...service})};
  }
- const globals={document:{querySelector(s){return elements.get(s);},body},MediaSource:Media,URL:{createObjectURL(m){const u='blob:'+urls.size;urls.set(u,m);return u;},revokeObjectURL(){}},AbortController,DOMException,CarDashAudio:audio,fetch,setInterval(){},setTimeout(){return 1;},clearTimeout(){},performance:{now:()=>100},console};
+ const globals={document:{querySelector(s){return elements.get(s);},body,addEventListener(name,fn){events.set('document:'+name,fn);}},MediaSource:Media,URL:{createObjectURL(m){const u='blob:'+urls.size;urls.set(u,m);return u;},revokeObjectURL(){}},AbortController,DOMException,CarDashAudio:audio,fetch,setInterval(){},setTimeout(){return 1;},clearTimeout(){},performance:{now:()=>100},console};
  if(canvasMode){
   globals.Blob=Blob;globals.createImageBitmap=async()=>{if(bitmapDeferred){const p=bitmapDeferred;bitmapDeferred=null;return p;}const b={width:1280,height:720,closed:0,close(){this.closed++;}};bitmaps.push(b);return b;};
   globals.CarDashCanvas={available:()=>canvasMode==='webcodecs',create(options){const r={options,closed:0,pushed:[],stats:{},async push(b){this.pushed.push(b);},close(){this.closed++;}};renderers.push(r);return r;}};
@@ -158,7 +158,7 @@ test('phone output never enables or connects browser audio on Start or native to
  f.elements.get('video').onpointerdown({pointerId:1,clientX:100,clientY:100});await settle();
  assert.equal(f.audioCalls.enable,0);assert.equal(f.audioCalls.connect.length,0);
  assert.equal(f.elements.get('#sound').hidden,true);
- assert.match(f.elements.get('#status').textContent,/phone.*Bluetooth/i);f.run('end()');
+ assert.match(f.elements.get('#status').textContent,/device output/i);f.run('end()');
 });
 
 test('changing audio output performs stop-configure-start and keeps phone choice on reconnect',async()=>{
@@ -370,7 +370,7 @@ test('a stalled image request is aborted and reports its timeout',async()=>{
 test('hosted page sends nothing before Connect and labels experimental mode',async()=>{
  const f=fixture({hosted:true,canvasMode:'webcodecs',active:false,audioOutput:'phone'});await settle();
  assert.equal(f.fetchCalls.length,0);assert.equal(f.elements.get('#start').disabled,true);
- assert.match(f.elements.get('#buildLabel').textContent,/Experimental HTTPS/);
+ assert.match(f.elements.get('#buildLabel').textContent,/HTTPS3 beta/);
  f.elements.get('#endpoint').value='http://169.254.38.140:8890/';await f.elements.get('#connect').onclick();await settle();
  assert.deepEqual(f.connectionCalls,['http://169.254.38.140:8890/']);assert(f.adapterCalls.includes('/api/status'));
  assert.equal(f.elements.get('#start').disabled,false);assert.equal(f.elements.get('#connect').textContent,'Reconnect');
@@ -500,19 +500,20 @@ test('network retries use 0.5/1/2 seconds and count actual delayed execution tow
  for(const [index,delay,at] of [[0,500,90100],[1,1000,91100],[2,2000,93100]]){
   f.streams[index].finish();await settle();assert.equal(clock.pending()[0].ms,delay);clock.fire(0,at);await settle();
  }
- f.streams[3].finish();await settle();assert.equal(clock.pending().length,0);assert.equal(f.renderers.length,4);
+ f.streams[3].finish();await settle();assert.equal(clock.pending().length,1);assert.equal(f.renderers.length,4);
  assert.equal(f.run('nativeStats.streamRecoveries'),3);assert.equal(f.run('nativeStats.videoRetries'),3);assert.equal(f.run('inputSession'),'first');assert.equal(f.audioCalls.stop,stops);
- assert.match(f.elements.get('#status').textContent,/recovery limit.*Reconnect/i);await f.run('poll()');await settle();assert.equal(f.renderers.length,4);f.run('end()');
+ assert.match(f.elements.get('#status').textContent,/retry|recover|reconnect/i);await f.run('poll()');await settle();assert.equal(f.renderers.length,4);
+ assert.equal(clock.pending()[0].ms,57000);clock.fire(0,150100);await settle();assert.equal(f.renderers.length,5);assert.equal(f.run('blockedVideoSession'),null);assert.equal(f.audioCalls.stop,stops);f.run('end()');
 });
 
 test('sustained timeline lag reconnects only the display with a ten-second catchup cooldown',async()=>{
  const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f),stops=f.audioCalls.stop;
  f.service={videoTimelineTicks:102*90000};f.renderers[0].options.onFrame({decodedFrames:12,presentedFrames:10,timestamp:100000000,renderer:'webgl'});
  await f.run('poll()');await settle();assert.equal(clock.pending().length,0);assert.equal(f.run('nativeStats.streamLagMs'),2000);
- await f.run('poll()');await settle();assert.equal(clock.pending()[0].ms,0);clock.fire(0,100);await settle();
+ f.run('clockNow=2100');await f.run('poll()');await settle();assert.equal(clock.pending()[0].ms,0);clock.fire(0,2100);await settle();
  f.service={videoTimelineTicks:106*90000};f.renderers[1].options.onFrame({decodedFrames:2,presentedFrames:2,timestamp:102000000,renderer:'webgl'});
- await f.run('poll()');await settle();assert.equal(clock.pending()[0].ms,10000);assert.equal(f.run('nativeStats.videoRetries'),0);
- clock.fire(0,10100);await settle();assert.equal(f.run('nativeStats.streamRecoveries'),2);assert.equal(f.audioCalls.stop,stops);assert.equal(f.run('inputSession'),'first');
+ await f.run('poll()');await settle();assert.equal(clock.pending().length,0);f.run('clockNow=4100');await f.run('poll()');await settle();assert.equal(clock.pending()[0].ms,8000);assert.equal(f.run('nativeStats.videoRetries'),0);
+ clock.fire(0,12100);await settle();assert.equal(f.run('nativeStats.streamRecoveries'),2);assert.equal(f.audioCalls.stop,stops);assert.equal(f.run('inputSession'),'first');
  assert.equal(f.requests.filter(r=>['/api/start','/api/stop','/api/resize'].includes(r.url)).length,0);f.run('end()');
 });
 
@@ -528,4 +529,73 @@ test('passive viewers adopt viewport ownership only through the explicit Fit dis
  f.run('fullscreen(true);fullscreen(false)');f.events.get('resize')();await f.run('reconcileLayout()');await settle();
  assert.equal(f.run('layoutSession'),null);assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);
  await f.elements.get('#fitViewport').onclick();await settle();assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,1);assert.equal(f.run('layoutSession'),'resized');f.run('end()');
+});
+
+
+test('every heartbeat sends lightweight congestion feedback independently of diagnostic cadence',async()=>{
+ const f=fixture({audioOutput:'phone'});await settle();f.run('nativeStats.heartbeatRttMs=800;nativeStats.streamLagMs=1500');
+ await f.run('heartbeat()');await settle();await f.run('heartbeat()');await settle();
+ const sent=f.requests.filter(r=>r.url==='/api/heartbeat').slice(-2);
+ assert.equal(sent.length,2);assert.deepEqual(sent[0].value.link,{heartbeatRttMs:800,streamLagMs:1500,hidden:false,frameReady:false});assert.deepEqual(sent[1].value.link,{heartbeatRttMs:0,streamLagMs:1500,hidden:false,frameReady:false});f.run('end()');
+});
+test('canvas capability header is sent only to a backend that advertises it',async()=>{
+ for(const supported of [false,true]){
+  const f=fixture({hosted:true,canvasMode:'webcodecs',continuousDecode:supported});await f.elements.get('#connect').onclick();await settle();
+  const request=f.fetchCalls.find(r=>r.url==='/video');assert.equal(request.options.headers['X-CarDash-Renderer'],supported?'webcodecs':undefined);f.run('end()');
+ }
+});
+test('a connected native stream with no first browser frame retries without a manual reconnect',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.service={nativeFrames:100,videoTimelineTicks:120*90000};f.run('clockNow=120100');await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,1);assert.equal(f.run('blockedVideoSession'),null);clock.fire(0,120600);await settle();assert.equal(f.renderers.length,2);f.run('end()');
+});
+test('a transient decoder capacity stall uses video-only recovery',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f),stops=f.audioCalls.stop;
+ const error=new Error('Native decoder stalled');error.code='DECODER_STALLED';f.renderers[0].options.onError(error);await settle();
+ assert.equal(clock.pending().length,1);assert.equal(f.run('blockedVideoSession'),null);clock.fire(0,600);await settle();assert.equal(f.renderers.length,2);assert.equal(f.audioCalls.stop,stops);f.run('end()');
+});
+test('an unchanged native screen stays interactive; a missing newer frame triggers recovery',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'phone'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.renderers[0].options.onFrame({decodedFrames:100,presentedFrames:100,timestamp:100000000,renderer:'webgl'});
+ f.service={nativeFrames:100,videoTimelineTicks:100*90000+3000,native:{authenticated:true,activated:true}};
+ f.run('clockNow=120100');await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,0,'A native idle screen is not a failed video connection');
+ assert.equal(f.run("send(.2,.2,true,'down')"),true);await settle();assert.equal(f.touches.length,1);
+ assert.doesNotMatch(f.elements.get('#status').textContent,/waiting for browser frames/);
+ f.service={nativeFrames:130,videoTimelineTicks:101*90000};await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,0,'A new native frame needs time to reach the browser');
+ f.run('clockNow=126100');await f.run('poll()');await settle();assert.equal(clock.pending().length,1,'The native source remained ahead without a matching display frame');f.run('end()');
+});
+test('a timestamp jump after native idle grants delivery time before any recovery',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'phone'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.renderers[0].options.onFrame({decodedFrames:100,presentedFrames:100,timestamp:100000000,renderer:'webgl'});
+ f.service={nativeFrames:100,videoTimelineTicks:100*90000+3000};f.run('clockNow=120100');await f.run('poll()');
+ f.service={nativeFrames:101,videoTimelineTicks:120*90000};f.run('clockNow=120200');await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,0,'Status arrived before the resumed video frame');
+ f.renderers[0].options.onFrame({decodedFrames:101,presentedFrames:101,timestamp:120000000,renderer:'webgl'});
+ f.run('clockNow=123000');await f.run('poll()');await settle();assert.equal(clock.pending().length,0);assert.equal(f.run('closed'),false);f.run('end()');
+});
+test('fresh caught-up canvas output clears deficit age before the next status poll',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.renderers[0].options.onFrame({decodedFrames:100,presentedFrames:100,timestamp:100000000,renderer:'webgl'});
+ f.service={nativeFrames:101,videoTimelineTicks:103*90000};await f.run('poll()');f.run('clockNow=200');
+ f.renderers[0].options.onFrame({decodedFrames:101,presentedFrames:101,timestamp:103000000,renderer:'webgl'});
+ f.service={nativeFrames:102,videoTimelineTicks:106*90000};f.run('clockNow=2100');await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,0);f.run('end()');
+});
+test('catching up to an old status sample does not mask sustained moving-source lag',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.renderers[0].options.onFrame({decodedFrames:100,presentedFrames:100,timestamp:100000000,renderer:'webgl'});
+ f.service={nativeFrames:101,videoTimelineTicks:103*90000};await f.run('poll()');f.run('clockNow=2000');
+ f.renderers[0].options.onFrame({decodedFrames:101,presentedFrames:101,timestamp:103000000,renderer:'webgl'});
+ f.service={nativeFrames:102,videoTimelineTicks:105*90000};f.run('clockNow=2100');await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,1);f.run('end()');
+});
+test('visibility changes reset deficit age even when hidden polling is suspended',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.renderers[0].options.onFrame({decodedFrames:100,presentedFrames:100,timestamp:100000000,renderer:'webgl'});
+ f.service={nativeFrames:101,videoTimelineTicks:103*90000};await f.run('poll()');
+ f.run('document.hidden=true');f.events.get('document:visibilitychange')?.();f.run('clockNow=30100;document.hidden=false');f.events.get('document:visibilitychange')?.();
+ f.service={nativeFrames:102,videoTimelineTicks:130*90000};await f.run('poll()');await settle();
+ assert.equal(clock.pending().length,0);f.run('clockNow=32100');await f.run('poll()');await settle();assert.equal(clock.pending().length,1);f.run('end()');
 });

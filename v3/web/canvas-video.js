@@ -120,13 +120,13 @@
   canvas.addEventListener?.('webglcontextlost',contextLost);
   // Configuration and capacity waits must unblock at close, even if a browser
   // decoder never settles its own promise or emits another event.
-  function waitFor(operation,message){
+  function waitFor(operation,message,code){
    if(closed)return Promise.reject(new Error('Native canvas closed'));
    return new Promise((resolve,reject)=>{
     let settled=false,timer=null;
     const finish=(error,value)=>{if(settled)return;settled=true;if(timer!==null)clearTimeout(timer);waits.delete(cancel);error?reject(error):resolve(value);};
     const cancel=()=>finish(new Error('Native canvas closed'));
-    waits.add(cancel);timer=setTimeout(()=>finish(new Error(message)),WAIT_MS);
+    waits.add(cancel);timer=setTimeout(()=>finish(Object.assign(new Error(message),{code})),WAIT_MS);
     Promise.resolve(operation).then(value=>finish(null,value),error=>finish(error));
    });
   }
@@ -135,7 +135,7 @@
    need(typeof instance.addEventListener==='function','Native decoder cannot report available capacity');
    let ready;
    const available=new Promise(resolve=>{ready=()=>{if(instance.decodeQueueSize<MAX_QUEUE)resolve();};instance.addEventListener('dequeue',ready);ready();});
-   try{await waitFor(available,'Native decoder stalled for 2 seconds; switching renderer.');}
+   try{await waitFor(available,'Native decoder stalled for 2 seconds; reconnecting display.','DECODER_STALLED');}
    finally{instance.removeEventListener('dequeue',ready);}
   }
   function render(){

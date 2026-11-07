@@ -64,6 +64,12 @@ class KeyframesTest(unittest.IsolatedAsyncioTestCase):
         r.video_last_idr_at=174;r.video_gop_bytes=100
         await self.tick(175);self.assertEqual(r.command.await_count,2)
 
+    async def test_continuous_canvas_decoder_does_not_restart_encoder_periodically(self):
+        r=self.r;r.viewers={object():{'session':'current','continuous_decode':True,'closed':False}};r.event=object();r.command=AsyncMock()
+        r.video_last_idr_at=1;r.video_gop_bytes=40*1024*1024;r.last_keyframe_request=1
+        await self.tick(200)
+        r.command.assert_not_awaited()
+
     async def test_viewer_join_records_cooldown_and_stale_request_cannot_change_it(self):
         r=self.r;r.video=object();r.muxer=object();r.command=AsyncMock()
         writer=types.SimpleNamespace(write=Mock(),drain=AsyncMock())

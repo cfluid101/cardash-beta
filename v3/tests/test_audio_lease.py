@@ -29,6 +29,12 @@ class AudioLeaseTest(unittest.TestCase):
   clock[0]=14.5;lease.refresh(True)
   self.assertIn((lib.tokens[b'com.cfluid.cardash.v3.audio.lease'],14500),lib.writes)
   lease.clear();self.assertEqual(lib.writes[-2:],[(lib.tokens[b'com.cfluid.cardash.v3.audio.request'],0),(lib.tokens[b'com.cfluid.cardash.v3.audio.lease'],0)])
+ def test_route_status_reports_applied_device_policy_only_from_current_adapter(self):
+  state=(123<<16)|15
+  result=audio_route_status(probe=lambda:256*123+1,alive=lambda pid:None,state_probe=lambda:state)
+  self.assertTrue(result['deviceOutputActive']);self.assertTrue(result['leaseValid'])
+  result=audio_route_status(probe=lambda:256*123+1,alive=lambda pid:None,state_probe=lambda:(124<<16)|15)
+  self.assertFalse(result['deviceOutputActive'])
  def test_failed_write_and_missing_adapter_are_explicit(self):
   lib=Notify();lease=AudioLease(library=lib,clock=lambda:12);lib.fail=True
   with self.assertRaises(OSError):lease.refresh(True)

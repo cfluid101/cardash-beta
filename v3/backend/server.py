@@ -32,12 +32,13 @@ from provision import CERT_SHA256
 from audio_transport import AudioChannel
 from network import TeslaNetwork,allowed_peer
 from transport import transport_status,startup_failure,AudioLease,audio_route_status
+from video_budget import VideoBudget, VideoBudgetLease, budget_status
 from browser_access import BrowserAccess,BrowserAccessError
 
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.5-https.2'
+VERSION='3.0.0-beta.5-https.3'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
 
@@ -93,7 +94,8 @@ class Receiver:
             self.settings=settings if isinstance(settings,dict) else {}
         except (OSError,ValueError):self.settings={}
         self.audio_output='browser' if self.settings.get('audioOutput')=='browser' else 'phone'
-        self.audio_lease=AudioLease()
+        self.audio_lease=AudioLease();self.video_budget=VideoBudget();self.video_lease=VideoBudgetLease()
+        self.video_rate_at=time.monotonic();self.video_rate_bytes=0;self.video_bps=0
         self.last_browser_metrics=-float('inf');self.browser_metrics_clients={}
         self.display=geometry();self.actual_source=None;self.display_verified=False
         self.network=TeslaNetwork(args.port)
@@ -110,7 +112,7 @@ class Receiver:
         return all((self.state/'accessory'/x).is_file() for x in ['identity.pk8','certificate.p7b'])
     def status(self):
         return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,network=self.network.status,transport=transport_status(self.state),
-                    nativeFrames=self.frames,codec=self.codec,videoConnected=bool(self.video),eventConnected=bool(self.event),videoKeyframes=self.video_keyframes,videoTimelineTicks=self.video_ticks,
+                    nativeFrames=self.frames,codec=self.codec,videoContinuousDecode=True,videoBudget={**budget_status(),"targetBps":self.video_budget.bps,"measuredBps":self.video_bps},videoConnected=bool(self.video),eventConnected=bool(self.event),videoKeyframes=self.video_keyframes,videoTimelineTicks=self.video_ticks,
                     native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
                     audioSupported=True,audioOutput=self.audio_output,audioRouting=audio_route_status(),microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=self.display.width,sourceHeight=self.display.height,requestedViewport=self.display.viewport,actualSource=self.actual_source,displayVerified=self.display_verified,imageStats=self.image_stats())
     def receiver_info(self):
@@ -208,6 +210,7 @@ class Receiver:
         transport=transport_status(self.state);need(transport['ready'],transport.get('error','Transport unavailable'))
         if self.audio_output=='phone':
             routing=audio_route_status();need(routing['ready'],routing.get('error','Audio routing unavailable'))
+        budget=budget_status();need(budget['ready'] and budget.get('pid')==transport.get('pid'),'Video bandwidth adapter unavailable; reinstall this beta to reload the media service')
         self.display=geometry(viewport);self.actual_source=None;self.display_verified=False;self.image_error='';self.image_sequence=0
         self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
         need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
@@ -215,6 +218,8 @@ class Receiver:
         self.reset_video_history();self.last_keyframe_request=-float('inf')
         self.audio_history=[];self.audio_ducked=False;self.clock_offset=0
         self.pending_commands.clear()
+        self.video_budget=VideoBudget()
+        self.video_rate_at=time.monotonic();self.video_rate_bytes=0;self.video_bps=0
         self.generation=os.urandom(16).hex()
         if self.args.capture:
             folder=Path(self.args.capture);folder.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -222,10 +227,10 @@ class Receiver:
         public=crypto.public(bytes.fromhex(self.identity['seed'])).hex()
         try:
             self.audio_lease.refresh(self.audio_output=='phone')
+            self.video_lease.refresh(self.video_budget.bps)
             self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'0',stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
         except BaseException:
-            try:self.audio_lease.clear()
-            except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
+            self.clear_leases()
             if self.capture:self.capture.close();self.capture=None
             self.generation=None
             raise
@@ -254,6 +259,10 @@ class Receiver:
         except asyncio.CancelledError:pass
     async def stop(self,reason='user_stop',generation=None):
         async with self.lock:return await self._stop_locked(reason,generation)
+    def clear_leases(self):
+        for name,lease in [('video',self.video_lease),('audio',self.audio_lease)]:
+            try:lease.clear()
+            except OSError as e:self.log(name+'_lease_clear_failed',error=str(e))
     def session_tag(self):
         return hashlib.sha256(self.generation.encode()).hexdigest()[:12] if self.generation else None
     async def _stop_locked(self,reason='user_stop',generation=None):
@@ -263,8 +272,7 @@ class Receiver:
         now=time.monotonic();tag=self.session_tag()
         lifetime=min(10**9,max(0,round((now-self.started)*1000))) if self.active else 0
         heartbeat_age=min(10**9,max(0,round((now-self.last_heartbeat)*1000))) if self.active else 0
-        try:self.audio_lease.clear()
-        except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
+        self.clear_leases()
         child=self.helper;self.helper=None;self.active=False;self.generation=None
         await self.close_images()
         if child and child.returncode is None:
@@ -530,6 +538,11 @@ class Receiver:
             try:q.put_nowait(None)
             except asyncio.QueueFull:pass
     def frame(self,data,timestamp):
+        self.video_rate_bytes+=len(data);now=time.monotonic()
+        if now-self.video_rate_at>=5:
+            self.video_bps=round(self.video_rate_bytes*8/(now-self.video_rate_at))
+            self.log('video_rate',bps=self.video_bps,budget=self.video_budget.bps,queue_bytes=max((s['bytes'] for s in self.viewers.values()),default=0),native_budget=budget_status(),audio_policy=audio_route_status())
+            self.video_rate_bytes=0;self.video_rate_at=now
         key=keyframe(data)
         owner=self.images
         if owner and self.image_current(owner,self.generation):
@@ -569,7 +582,11 @@ class Receiver:
                     # Buffered native reads can contain many small frames at once.
                     # Let HTTP writers drain instead of overflowing a healthy viewer.
                     await asyncio.sleep(0)
-                    while generation==self.generation and any(not s['closed'] and q.qsize()>32 for q,s in self.viewers.items()):
+                    # Yield briefly for a healthy burst, but never let one slow
+                    # browser block the native timeline indefinitely. Its own
+                    # bounded queue will close it while native ingress stays live.
+                    until=time.monotonic()+.02
+                    while generation==self.generation and time.monotonic()<until and any(not s['closed'] and q.qsize()>32 for q,s in self.viewers.items()):
                         await asyncio.sleep(.001)
                     if generation!=self.generation or not more:break
         except Exception as e:self.error=str(e);self.log('video_error',error=str(e))
@@ -583,7 +600,9 @@ class Receiver:
             await asyncio.sleep(2)
             if not self.active:continue
             generation=self.generation
-            try:self.audio_lease.refresh(self.audio_output=='phone')
+            try:
+                self.audio_lease.refresh(self.audio_output=='phone')
+                self.video_lease.refresh(self.video_budget.bps)
             except OSError as e:
                 self.error='Audio route lease failed: '+str(e);self.log('audio_lease_failed',error=self.error)
                 await self.stop('audio_lease_failed',generation=generation);continue
@@ -601,7 +620,7 @@ class Receiver:
             # healthy heartbeats must not repeatedly rebuild the encoder.
             now=time.monotonic()
             await self.expire_images(now)
-            if (self.viewers or self.images) and self.event and self.video_last_idr_at and (self.video_gop_bytes>8*1024*1024 or now-self.video_last_idr_at>30):
+            if (any(not state.get('continuous_decode',False) and not state.get('closed',False) for state in self.viewers.values()) or self.images) and self.event and self.video_last_idr_at and (self.video_gop_bytes>8*1024*1024 or now-self.video_last_idr_at>30):
                 try:await self.request_keyframe(generation,'long_gop')
                 except Exception as e:self.log('keyframe_error',error=str(e))
     async def action(self,value,local=False):
@@ -615,7 +634,7 @@ class Receiver:
             stopped=await self.stop(generation=None if local else value.get('session'))
             need(stopped,'Stale native session');return self.status()
         if action=='heartbeat':
-            self.last_heartbeat=time.monotonic();self.had_viewer=True;self.browser_metrics(value.get('browser'));return self.status()
+            self.last_heartbeat=time.monotonic();self.had_viewer=True;self.video_budget.feedback(value.get('link',value.get('browser')),time.monotonic());self.browser_metrics(value.get('browser'));return self.status()
         if action=='touch':return await self.touch(value)
         if action=='prepare' and local:await self.prepare();return self.status()
         if action=='import' and local:return await self.import_identity()
@@ -691,7 +710,7 @@ class Receiver:
             elif not authenticated:await self.reply(writer,403,b'Open the CarDash page first','text/plain')
             elif method=='GET' and path=='/api/status':await self.reply(writer,200,json.dumps(self.status()).encode(),extra=cors)
             elif method=='GET' and path=='/video':
-                need(self.active and headers.get('x-cardash-session')==self.generation,'Stale native session');await self.viewer(writer,reader,response_headers=cors)
+                need(self.active and headers.get('x-cardash-session')==self.generation,'Stale native session');await self.viewer(writer,reader,response_headers=cors,continuous_decode=headers.get('x-cardash-renderer')=='webcodecs')
             elif method=='GET' and path=='/image':await self.image_viewer(writer,headers.get('x-cardash-session'),headers.get('x-cardash-frame','0'),reader,response_headers=cors)
             elif method=='GET' and path=='/audio':await self.audio_viewer(writer,headers.get('x-cardash-session'),reader,response_headers=cors)
             elif method=='POST' and path.startswith('/api/'):
@@ -821,10 +840,10 @@ class Receiver:
             if generation==self.generation:self.image_error=str(e)[:256]
             raise
         finally:self.image_waiters-=1
-    async def viewer(self,writer,reader=None,response_headers=None):
+    async def viewer(self,writer,reader=None,response_headers=None,continuous_decode=False):
         need(self.active and self.video and self.muxer,'Native video is not ready')
         if len(self.viewers)>=2:raise HTTPBusyError('Two viewers are already connected')
-        q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
+        q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation,'continuous_decode':continuous_decode};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
         try:
             response_phase(writer,'video_headers')
             writer.write(self.stream_headers('video/mp4',response_headers));await asyncio.wait_for(writer.drain(),3)

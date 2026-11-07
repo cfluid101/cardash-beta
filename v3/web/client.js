@@ -9,8 +9,8 @@ let inputSession=null,videoConnection=null,commandEpoch=0,audioEpoch=0,carplayAc
 let baseStatus='Connecting to iPhone…',audioError='';
 let audioOutput='phone',changingOutput=false,changingLayout=false;
 let layoutSession=null,layoutViewport=null,resizeTimer=null,sourceWidth=1280,sourceHeight=720,layoutError='';
-let forceImage=false,lastFrameAt=0,resizePending=false;
-let streamRecovery={session:null,attempts:[],timer:null,pending:null,lagCount:0,reason:''};
+let forceImage=false,lastFrameAt=0,resizePending=false,continuousDecodeSupported=false;
+let streamRecovery={session:null,attempts:[],timer:null,pending:null,reason:''};
 let controlsHiddenSession=null,inputCleanup=null;
 function viewport(){const r=video.getBoundingClientRect();return {width:Math.round(r.width),height:Math.round(r.height)};}
 function sameViewport(a,b){return a&&b&&Math.abs(a.width-b.width)<2&&Math.abs(a.height-b.height)<2;}
@@ -51,32 +51,30 @@ function closeDisplay(keepLastFrame=false){
 }
 function end(){
  if(streamRecovery.timer!==null)clearTimeout(streamRecovery.timer);
- streamRecovery={session:null,attempts:[],timer:null,pending:null,lagCount:0,reason:''};
+ streamRecovery={session:null,attempts:[],timer:null,pending:null,reason:''};
  closeDisplay();inputSession=null;audioEpoch++;audioError='';CarDashAudio.stop();
 }
 function recoverDisplay(error,owner,codec,reason='network'){
  if(!current(owner))return;
  const session=owner.session,now=performance.now();
- if(streamRecovery.session!==session)streamRecovery={session,attempts:[],timer:null,pending:null,lagCount:0,reason:''};
+ if(streamRecovery.session!==session)streamRecovery={session,attempts:[],timer:null,pending:null,reason:''};
  const recovery=streamRecovery;
  recovery.attempts=recovery.attempts.filter(at=>now-at.time<60000);
- closeDisplay(true);recovery.lagCount=0;recovery.reason=reason;
- const limit=()=>{
-  blockedVideoSession=session;blockedVideoError='Display recovery limit reached: '+error.message+' Press Reconnect to retry.';
-  baseStatus=blockedVideoError;fullscreen(false);renderStatus();
- };
- if(recovery.attempts.length>=3){limit();return;}
+ closeDisplay(true);recovery.reason=reason;
  const previous=recovery.attempts.at(-1),networkAttempts=recovery.attempts.filter(at=>at.reason==='network').length;
- const delay=reason==='lag'?Math.max(0,previous?previous.time+10000-now:0):[500,1000,2000][networkAttempts];
+ const cooldown=recovery.attempts.length>=3?Math.max(1,recovery.attempts[0].time+60000-now):0;
+ const delay=Math.max(cooldown,reason==='lag'?Math.max(0,previous?previous.time+10000-now:0):[500,1000,2000][Math.min(2,networkAttempts)]);
  baseStatus=reason==='lag'?'Catching up the native display…':'Reconnecting the native display…';renderStatus();
  const ticket={};recovery.pending=ticket;
- recovery.timer=setTimeout(()=>{
+ recovery.timer=setTimeout(function retry(){
   // A cancelled callback may already be queued when a new session starts.
   if(streamRecovery!==recovery||recovery.pending!==ticket)return;
   recovery.timer=null;recovery.pending=null;
   if(!carplayActive||inputSession!==session||!closed||!transport.diagnostics.ready)return;
   const actual=performance.now();recovery.attempts=recovery.attempts.filter(at=>actual-at.time<60000);
-  if(recovery.attempts.length>=3){limit();return;}
+  if(recovery.attempts.length>=3){
+   recovery.pending=ticket;recovery.timer=setTimeout(retry,Math.max(1,recovery.attempts[0].time+60000-actual));return;
+  }
   // Count actual reconnects, not scheduled timestamps: backgrounded browser
   // timers can run much later than requested.
   recovery.attempts.push({time:actual,reason});nativeStats.streamRecoveries++;
@@ -95,7 +93,7 @@ function renderStatus(){
  const rendering=carplayActive&&nativeStats.renderer?' · '+(nativeStats.renderer==='jpeg-canvas'?'Native image stream':nativeStats.renderer.startsWith('webcodecs')?'H.264 canvas':'Video player'):'';
  const displayStatus=(inputError?inputError+' · ':'')+(layoutError?layoutError+' · '+baseStatus:baseStatus)+rendering;
  const fit=document.querySelector('#fitViewport');if(fit)fit.disabled=changingOutput||changingLayout||!carplayActive||!inputSession;
- if(audioOutput!=='browser'){status.textContent=displayStatus+' · Audio: phone / Bluetooth';return;}
+ if(audioOutput!=='browser'){status.textContent=displayStatus+' · Audio: device output';return;}
  const error=audioError||(carplayActive?a.error:'');
  const retry=Boolean(error)||(carplayActive&&a.enabled&&a.contextState==='running'&&a.connectionState==='disconnected');
  button.textContent=retry?'Retry sound':a.contextState!=='running'||!a.enabled?'Enable sound':a.muted?'Unmute':'Mute';
@@ -210,9 +208,13 @@ async function connectCanvas(codec,session){
  const owner=canvasOwner(session,'webcodecs-webgl');owner.codec=codec;let retryable=false;
  try{
   owner.renderer=CarDashCanvas.create({canvas,codec,width:sourceWidth,height:sourceHeight,
-   onFrame:s=>{if(!current(owner))return;frameDisplayed(owner);lastFrameAt=performance.now();nativeStats.decodedFrames=s.decodedFrames;nativeStats.presentedFrames=s.presentedFrames;nativeStats.mediaTime=s.timestamp/1e6;nativeStats.renderer=s.renderer==='canvas2d'?'webcodecs-2d':'webcodecs-webgl';},
-   onError:e=>{if(!current(owner))return;if(!hosted)forceImage=true;failVideo(new Error('H.264 canvas decoder: '+e.message),owner,'canvas-decoder');}});
-  retryable=true;const response=await fetchDevice('/video',{signal:owner.abort.signal,headers:{'X-CarDash-Session':session}});
+   onFrame:s=>{if(!current(owner))return;frameDisplayed(owner);lastFrameAt=performance.now();nativeStats.decodedFrames=s.decodedFrames;nativeStats.presentedFrames=s.presentedFrames;nativeStats.mediaTime=s.timestamp/1e6;nativeStats.renderer=s.renderer==='canvas2d'?'webcodecs-2d':'webcodecs-webgl';
+    // A fresh output can catch up between polls. An old status reference must
+    // not mask a continuously moving source that is still seconds behind.
+    if(Number.isSafeInteger(owner.timelineTicks)&&Number.isFinite(owner.timelineRequestedAt)&&lastFrameAt-owner.timelineRequestedAt<=500&&owner.timelineTicks/90-s.timestamp/1000<=500)owner.nativeLagSince=null;
+   },
+   onError:e=>{if(!current(owner))return;if(hosted&&e.code==='DECODER_STALLED'){recoverDisplay(e,owner,codec,'network');return;}if(!hosted)forceImage=true;failVideo(new Error('H.264 canvas decoder: '+e.message),owner,'canvas-decoder');}});
+  retryable=true;const response=await fetchDevice('/video',{signal:owner.abort.signal,headers:{'X-CarDash-Session':session,...(continuousDecodeSupported?{'X-CarDash-Renderer':'webcodecs'}:{})}});
   if(!current(owner))return;if(!response.ok||!response.body){retryable=response.status>=500;throw new Error('Native H.264 is not ready ('+response.status+')');}
   owner.reader=response.body.getReader();connecting=false;
   for(;;){retryable=true;const {value,done}=await owner.reader.read();if(!current(owner))break;if(done)throw new Error('Native H.264 stream ended');retryable=false;await owner.renderer.push(value);}
@@ -315,6 +317,7 @@ function release(e){if(pointer?.id===e.pointerId){send(pointer.x,pointer.y,false
 video.onpointerup=release;video.onpointercancel=release;video.onlostpointercapture=release;
 function bindCanvas(){if(canvas){for(const event of ['onpointerdown','onpointermove','onpointerup','onpointercancel','onlostpointercapture'])canvas[event]=video[event];}}
 bindCanvas();
+document.addEventListener('visibilitychange',()=>{if(videoConnection)videoConnection.nativeLagSince=null;});
 window.addEventListener('pagehide',()=>{commandEpoch++;if(pointer)fetchDevice('/api/touch',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({...pointer,down:false,session:inputSession})}).catch(()=>{});end();});
 document.querySelector('#start').onclick=async()=>{
  if(connectionBusy||changingOutput||changingLayout||!transport.diagnostics.ready)return;
@@ -366,7 +369,7 @@ let heartbeatRequest=null;
 async function heartbeat(){
  if(heartbeatRequest||!carplayActive||!inputSession||changingLayout||changingOutput||!transport.diagnostics.ready)return;
  const request={session:inputSession};heartbeatRequest=request;
- try{await api('heartbeat',{session:request.session,browser:browserMetrics()});}
+ try{await api('heartbeat',{session:request.session,browser:browserMetrics(),link:{heartbeatRttMs:nativeStats.heartbeatRttMs,streamLagMs:nativeStats.streamLagMs,hidden:Boolean(document.hidden),frameReady:!!(current(videoConnection)&&nativeStats.decodedFrames>0)}});}
  catch(error){if(inputSession===request.session&&carplayActive){nativeStats.heartbeatErrors++;}}
  finally{if(heartbeatRequest===request)heartbeatRequest=null;}
 }
@@ -374,7 +377,7 @@ async function poll(){
  if(hosted&&!transport.diagnostics.ready){if(!closed)end();identityReady=false;carplayActive=false;renderStatus();return;}
  if(polling||connectionBusy||changingOutput||changingLayout)return;polling=true;const epoch=commandEpoch;
  try{
-  const s=await requestJSON('/api/status');if(epoch!==commandEpoch)return;identityReady=!!s.identityReady;
+  const statusRequestedAt=performance.now(),s=await requestJSON('/api/status');if(epoch!==commandEpoch)return;identityReady=!!s.identityReady;continuousDecodeSupported=s.videoContinuousDecode===true;
   const output=s.audioOutput==='browser'?'browser':'phone';
   if(output!==audioOutput){audioOutput=output;audioEpoch++;audioError='';CarDashAudio.stop();}
   document.querySelector('#audioOutput').value=audioOutput;
@@ -390,18 +393,28 @@ async function poll(){
    if(rendererStats){nativeStats.decodedFrames=rendererStats.decodedFrames??nativeStats.decodedFrames;nativeStats.presentedFrames=rendererStats.presentedFrames??nativeStats.presentedFrames;nativeStats.canvasDrawCalls=nativeStats.presentedFrames;}
    const ticks=Number.isSafeInteger(s.videoTimelineTicks)&&s.videoTimelineTicks>=0?s.videoTimelineTicks:0;
    nativeStats.streamLagMs=Math.max(0,ticks/90-(nativeStats.mediaTime||0)*1000);
+   // iOS may stop encoding an unchanged screen. Keep its last frame and touch
+   // connection; age alone is not evidence that newer pixels were lost.
+   const nativeAhead=nativeStats.streamLagMs>500;
+   const awaitingNativeFrame=!nativeStats.presentedFrames||nativeAhead;
    const owner=videoConnection;
-   if(hosted&&current(owner)&&owner.renderer&&nativeStats.presentedFrames>0){
-    streamRecovery.lagCount=nativeStats.streamLagMs>1500?streamRecovery.lagCount+1:0;
-    if(nativeStats.streamLagMs>3000||streamRecovery.lagCount>=2)recoverDisplay(new Error('The display fell behind the native stream.'),owner,s.codec,'lag');
+   if(hosted&&current(owner)&&owner.renderer&&!document.hidden){
+    const now=performance.now();
+    if(nativeAhead){if(owner.nativeLagSince==null)owner.nativeLagSince=now;}else owner.nativeLagSince=null;
+    const behindFor=owner.nativeLagSince==null?0:now-owner.nativeLagSince;
+    // A resumed native timestamp can jump across a long idle interval before
+    // its frame reaches the browser. Start the grace period at that observation.
+    if(s.nativeFrames>0&&now-lastFrameAt>6000&&(!nativeStats.presentedFrames||behindFor>=6000))recoverDisplay(new Error('No fresh display frames arrived.'),owner,s.codec,'network');
+    else if(nativeStats.presentedFrames>0&&nativeStats.streamLagMs>1500&&behindFor>=2000)recoverDisplay(new Error('The display fell behind the native stream.'),owner,s.codec,'lag');
    }
    heartbeat();if(epoch!==commandEpoch||session!==inputSession)return;
-   const phase=!s.native?.authenticated||!s.native?.activated?'starting native session':!s.nativeFrames?'waiting for native video':!nativeStats.decodedFrames?'receiving video; waiting for browser playback':performance.now()-lastFrameAt>5000?'waiting for browser frames':'playing';
+   const phase=!s.native?.authenticated||!s.native?.activated?'starting native session':!s.nativeFrames?'waiting for native video':!nativeStats.decodedFrames?'receiving video; waiting for browser playback':awaitingNativeFrame&&performance.now()-lastFrameAt>5000?'waiting for browser frames':'playing';
    baseStatus=(blockedVideoSession===session?blockedVideoError:'')||(streamRecovery.timer!==null?(streamRecovery.reason==='lag'?'Catching up the native display…':'Reconnecting the native display…'):'')||s.error||`Native CarPlay · ${Math.floor(s.sessionSeconds/60)}m ${s.sessionSeconds%60}s · ${phase}`;
    if(s.codec&&s.videoConnected&&closed&&blockedVideoSession!==session)connect(s.codec,session);
    if(current(videoConnection)){
     videoConnection.keyframes=Array.isArray(s.videoKeyframes)?s.videoKeyframes.slice(-32).filter(t=>Number.isSafeInteger(t)&&t>=0):[];
     videoConnection.timelineTicks=Number.isSafeInteger(s.videoTimelineTicks)&&s.videoTimelineTicks>=0?s.videoTimelineTicks:0;
+    videoConnection.timelineRequestedAt=statusRequestedAt;
    }
    connectSound(session);
   }else{
@@ -415,7 +428,7 @@ async function poll(){
 if(hosted){
  const panel=document.querySelector('#connectionPanel'),input=document.querySelector('#endpoint'),button=document.querySelector('#connect');
  if(panel)panel.hidden=false;if(input)input.value=transport.diagnostics.endpoint;
- const label=document.querySelector('#buildLabel');if(label)label.textContent='CarDash V3 · Experimental HTTPS';
+ const label=document.querySelector('#buildLabel');if(label)label.textContent='CarDash V3 · HTTPS3 beta';
  baseStatus='Connect to your iPhone to use the H.264 canvas renderer.';
  if(button)button.onclick=async()=>{
   if(connectionBusy||changingOutput||changingLayout)return;

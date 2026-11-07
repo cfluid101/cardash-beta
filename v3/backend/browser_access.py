@@ -20,7 +20,7 @@ ROUTES={
  **{('/api/'+name):frozenset(('POST',)) for name in ('start','stop','resize','heartbeat','touch','audio_output')},
  '/video':frozenset(('GET',)), '/audio':frozenset(('GET',)), '/image':frozenset(('GET',)),
 }
-ALLOWED_HEADERS=frozenset(('authorization','content-type','x-cardash-session','x-cardash-frame'))
+ALLOWED_HEADERS=frozenset(('authorization','content-type','x-cardash-session','x-cardash-frame','x-cardash-renderer'))
 
 
 class BrowserAccessError(ValueError):

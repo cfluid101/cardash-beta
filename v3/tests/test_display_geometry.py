@@ -16,11 +16,11 @@ from h264_fixture import configuration
 
 class DisplayGeometryTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.r=Receiver(types.SimpleNamespace(state=self.tmp.name,port=0,capture=None,helper='/unused'));self.r.audio_lease=Mock()
+        self.tmp=tempfile.TemporaryDirectory();self.r=Receiver(types.SimpleNamespace(state=self.tmp.name,port=0,capture=None,helper='/unused'));self.r.audio_lease=Mock();self.r.video_lease=Mock()
         folder=Path(self.tmp.name,'accessory');folder.mkdir();(folder/'certificate.p7b').write_bytes(b'cert');(folder/'identity.pk8').write_bytes(b'key')
         self.child=types.SimpleNamespace(pid=123,returncode=None,terminate=Mock(),kill=Mock(),wait=AsyncMock(return_value=0))
         self.stack=ExitStack()
-        for name,value in [('transport_status',{'ready':True}),('audio_route_status',{'ready':True}),('crypto.certificate_matches',True),('crypto.public',bytes(32))]:self.stack.enter_context(patch('server.'+name,return_value=value))
+        for name,value in [('budget_status',{'ready':True,'pid':44}),('transport_status',{'ready':True,'pid':44}),('audio_route_status',{'ready':True}),('crypto.certificate_matches',True),('crypto.public',bytes(32))]:self.stack.enter_context(patch('server.'+name,return_value=value))
         self.stack.enter_context(patch('server.CERT_SHA256',hashlib.sha256(b'cert').hexdigest()));self.stack.enter_context(patch('server.asyncio.create_subprocess_exec',new_callable=AsyncMock,return_value=self.child));self.r.watch_helper=AsyncMock()
     async def asyncTearDown(self):
         await self.r.stop();self.stack.close();self.tmp.cleanup()

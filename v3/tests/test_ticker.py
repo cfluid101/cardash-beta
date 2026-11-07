@@ -17,7 +17,7 @@ class TickerTest(unittest.IsolatedAsyncioTestCase):
         self.r=Receiver(types.SimpleNamespace(state=self.tmp.name,port=0,capture=None,helper='/unused'))
         self.r.active=True;self.r.generation='current';self.r.frames=100
         self.r.started=self.r.last_heartbeat=time.monotonic();self.r.had_viewer=True
-        self.r.audio_lease=Mock();self.r.command=AsyncMock();self.r.stop=AsyncMock()
+        self.r.audio_lease=Mock();self.r.video_lease=Mock();self.r.command=AsyncMock();self.r.stop=AsyncMock()
 
     async def asyncTearDown(self):self.tmp.cleanup()
 

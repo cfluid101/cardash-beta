@@ -8,11 +8,7 @@
 #include <cstring>
 #include <cstdint>
 #include <unistd.h>
-#ifdef CDV3_LOOPBACK_TEST
-static void CDV3AudioHost(bool) {}
-#else
 #include "AudioRoute.h"
-#endif
 
 @protocol CDV3LoopbackHost <NSObject>
 - (id)deviceIdentifier;
@@ -41,7 +37,7 @@ static bool OwnHost(uint8_t *state) {
 static int32_t Update(CFTypeRef helper) {
     uint8_t *s=(uint8_t *)DerivedStorage(helper);
     bool own=OwnHost(s);
-    CDV3AudioHost(own);
+    CDV3AudioHost(helper,own);
     if (!own) return OriginalUpdate(helper);
     CFDictionaryRef originalMap=*(CFDictionaryRef *)(s+0x98);
     if (!originalMap || CFGetTypeID(originalMap)!=CFDictionaryGetTypeID()) return OriginalUpdate(helper);
@@ -78,11 +74,11 @@ static void Event(void *block) {
     CFTypeRef helper=*(CFTypeRef *)(b+0x28);
     uint8_t *s=(uint8_t *)DerivedStorage(helper);
     bool preserve=*(int32_t *)(b+0x40)==4 && OwnHost(s) && *(uint32_t *)(s+0xb8)==1;
+    CFRetain(helper); // OriginalEvent can consume its final native reference.
     if (preserve) {
         // The native block releases its captured helper before returning.
         // Keep derived storage alive through our post-callback restoration,
         // including when that captured reference was the final native owner.
-        CFRetain(helper);
         // The USB callback still records the real interface change. Suppress
         // only its "USB transport owns this host" release for our loopback host.
         *(uint32_t *)(s+0xb8)=0;
@@ -90,12 +86,11 @@ static void Event(void *block) {
     }
     @try { OriginalEvent(block); }
     @finally {
-        if (preserve) {
-            @try {
-                if (OwnHost(s) && *(uint32_t *)(s+0xb8)==0) *(uint32_t *)(s+0xb8)=1;
-            }
-            @finally { CFRelease(helper); }
+        @try {
+            if (preserve && OwnHost(s) && *(uint32_t *)(s+0xb8)==0) *(uint32_t *)(s+0xb8)=1;
+            if (!OwnHost(s)) CDV3AudioHost(helper,false);
         }
+        @finally { CFRelease(helper); }
     }
 }
 
