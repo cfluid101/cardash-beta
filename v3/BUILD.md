@@ -6,6 +6,8 @@ The link input at `build/v3/device/libcrypto.3.dylib` must be from the rootless 
 
 The `src/Common.m`, `src/NativeIdentity.mm`, `src/HostPayload.mm` and associated headers are required alongside `v3/`. A matching source archive accompanies the beta. The package builder neither connects to nor installs on a phone. `v3/tests/` contains host tests; set `CDV3_CRYPTO` to the host-built OpenSSL bridge when running them. The separate Mac `receiver/` remains a research/reference implementation, with its duplicate-launch fix and its own manual launcher.
 
+The release source archive includes `SOURCE-COMMIT.txt`, expanded by Git during export, so building the archive does not require a `.git` directory. It includes V3, shared native sources, and reference libraries/tests; the Mac-specific research launcher remains available in the repository.
+
 Build the host crypto bridge before running Python tests:
 
 ```sh
