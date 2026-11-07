@@ -23,6 +23,11 @@ class HttpTest(unittest.IsolatedAsyncioTestCase):
   allowed=await self.request('/api/status',extra=f'Cookie: cdv3={self.r.token}\r\n');self.assertIn(b'200 OK',allowed)
   cross=await self.request('/api/start','POST',f'Cookie: cdv3={self.r.token}\r\nOrigin: https://unrelated.invalid\r\n',b'{}');self.assertIn(b'Cross-origin request rejected',cross)
   self.assertIsNone(self.r.helper)
+ async def test_canvas_module_is_explicitly_served_without_expanding_file_access(self):
+  with patch.object(Path,'read_bytes',return_value=b'// renderer module'):
+   result=await self.request('/canvas-video.js')
+  self.assertIn(b'200 OK',result);self.assertIn(b'Content-Type: text/javascript',result);self.assertTrue(result.endswith(b'// renderer module'))
+  forbidden=await self.request('/../backend/server.py',extra=f'Cookie: cdv3={self.r.token}\r\n');self.assertIn(b'404',forbidden)
  async def test_unprovisioned_start_is_actionable_and_does_not_launch(self):
   result=await self.request('/api/start','POST',f'Cookie: cdv3={self.r.token}\r\n',b'{}')
   self.assertIn(b'Prepare Native Preview',result);self.assertIsNone(self.r.helper)

@@ -27,16 +27,24 @@ import uuid
 import crypto
 from protocol import Pairing,ControlCipher,RtspParser,ScreenReceiver,mfi_sap,need
 from media import Muxer,keyframe
+from display import geometry,apply_geometry,avc_dimensions
 from provision import CERT_SHA256
 from audio_transport import AudioChannel
 from network import TeslaNetwork,allowed_peer
 from transport import transport_status,startup_failure,AudioLease,audio_route_status
+from browser_access import BrowserAccess,BrowserAccessError
 
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.4'
+VERSION='3.0.0-beta.5-https.1'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
+IMAGE_WAIT_SECONDS=4
+
+def create_image_decoder(config,width,height):
+    from video_image import JPEGDecoder
+    return JPEGDecoder(config,width,height,fps=10)
+
 
 def plist(data):return plistlib.dumps(data,fmt=plistlib.FMT_BINARY,sort_keys=False)
 def response(request,status=200,body=b'',kind='application/octet-stream'):
@@ -51,7 +59,8 @@ class Receiver:
         self.identity_path=self.state/'identity.json'
         if self.identity_path.exists():self.identity=json.loads(self.identity_path.read_text())
         else:self.identity={'id':str(uuid.uuid4()),'seed':os.urandom(32).hex(),'peers':{}};self.save_identity()
-        self.token=os.urandom(32).hex();self.lock=asyncio.Lock();self.command_lock=asyncio.Lock()
+        self.token=os.urandom(32).hex();self.browser_access=BrowserAccess();self.lock=asyncio.Lock();self.command_lock=asyncio.Lock()
+        self.images=None;self.image_lock=asyncio.Lock();self.image_waiters=0;self.image_epoch=0;self.image_close_tasks=set();self.image_error='';self.image_sequence=0
         self.helper=None;self.active=False;self.started=0;self.last_heartbeat=0;self.had_viewer=False
         self.error='';self.native_error='';self.native={};self.frames=0;self.codec=None;self.muxer=None;self.pending=None
         self.control=None;self.event=None;self.video=None;self.pair=None;self.screen_key=None;self.ec=None
@@ -70,6 +79,7 @@ class Receiver:
         self.audio_output='browser' if self.settings.get('audioOutput')=='browser' else 'phone'
         self.audio_lease=AudioLease()
         self.last_browser_metrics=-float('inf')
+        self.display=geometry();self.actual_source=None;self.display_verified=False
         self.network=TeslaNetwork(args.port)
         self.log('service_started',version=VERSION)
     def log(self,event,**values):
@@ -86,11 +96,11 @@ class Receiver:
         return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,network=self.network.status,transport=transport_status(self.state),
                     nativeFrames=self.frames,codec=self.codec,videoConnected=bool(self.video),eventConnected=bool(self.event),videoKeyframes=self.video_keyframes,videoTimelineTicks=self.video_ticks,
                     native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
-                    audioSupported=True,audioOutput=self.audio_output,audioRouting=audio_route_status(),microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=1280,sourceHeight=720)
+                    audioSupported=True,audioOutput=self.audio_output,audioRouting=audio_route_status(),microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=self.display.width,sourceHeight=self.display.height,requestedViewport=self.display.viewport,actualSource=self.actual_source,displayVerified=self.display_verified,imageStats=self.image_stats())
     def receiver_info(self):
         # iOS still requires complete CarPlay authentication/audio declarations.
         # The scoped native adapter preserves the phone route independently.
-        return plistlib.loads((ROOT/'receiver-info.plist').read_bytes())
+        return apply_geometry(plistlib.loads((ROOT/'receiver-info.plist').read_bytes()),self.display)
     async def set_audio_output(self,mode):
         need(mode in ('phone','browser'),'Invalid audio output')
         async with self.lock:
@@ -107,12 +117,14 @@ class Receiver:
         now=time.monotonic()
         if not isinstance(value,dict) or now-self.last_browser_metrics<12:return
         clean={}
-        limits={'width':16384,'height':16384,'decodedFrames':10**10,'droppedFrames':10**10,'currentTime':10**8,'readyState':4,'mediaError':4,'videoErrors':10**8}
+        limits={'width':16384,'height':16384,'decodedFrames':10**10,'droppedFrames':10**10,'currentTime':10**8,'readyState':4,'mediaError':4,'videoErrors':10**8,'presentedFrames':10**10,'frameAgeMs':10**9,'decoderQueueSize':10000}
         for key,limit in limits.items():
             n=value.get(key)
             if type(n) in (int,float) and math.isfinite(n) and 0<=n<=limit:clean[key]=n
-        for key in ('paused','hidden'):
+        for key in ('paused','hidden','secureContext','webCodecs','webGL','webGPU'):
             if type(value.get(key)) is bool:clean[key]=value[key]
+        if type(value.get('canvasDrawCalls')) is int and 0<=value['canvasDrawCalls']<=10**10:clean['canvasDrawCalls']=value['canvasDrawCalls']
+        if value.get('renderer') in ('mse','webcodecs-webgl','webcodecs-2d','jpeg-canvas','unavailable'):clean['renderer']=value['renderer']
         if clean:self.last_browser_metrics=now;self.log('browser_metrics',**clean)
     async def prepare(self):
         if self.ready():return
@@ -158,37 +170,39 @@ class Receiver:
             os.close(fd);self.provisioning=False;self.provision_child=None
             if os.path.exists(source):os.unlink(source)
         return self.status()
-    async def start(self):
-        async with self.lock:
-            if self.active:return self.status()
-            need(not self.provisioning,'Wait for identity preparation to finish')
-            need(self.ready(),'Open CarDash V3 on the phone and tap Prepare Native Preview first')
-            transport=transport_status(self.state);need(transport['ready'],transport.get('error','Transport unavailable'))
-            if self.audio_output=='phone':
-                routing=audio_route_status();need(routing['ready'],routing.get('error','Audio routing unavailable'))
-            self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
-            need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
-            self.frames=0;self.codec=None;self.muxer=None;self.pending=None;self.native={};self.error='';self.native_error='';self.capture_bytes=0
-            self.reset_video_history();self.last_keyframe_request=-float('inf')
-            self.audio_history=[];self.audio_ducked=False;self.clock_offset=0
-            self.pending_commands.clear()
-            self.generation=os.urandom(16).hex()
-            if self.args.capture:
-                folder=Path(self.args.capture);folder.mkdir(parents=True,exist_ok=True,mode=0o700)
-                self.capture=(folder/'native.mp4').open('wb')
-            public=crypto.public(bytes.fromhex(self.identity['seed'])).hex()
-            try:
-                self.audio_lease.refresh(self.audio_output=='phone')
-                self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'0',stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
-            except BaseException:
-                try:self.audio_lease.clear()
-                except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
-                if self.capture:self.capture.close();self.capture=None
-                self.generation=None
-                raise
-            self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False
-            self.native_watch=asyncio.create_task(self.watch_helper(self.helper,self.generation))
-            self.log('native_start',pid=self.helper.pid,audioOutput=self.audio_output);return self.status()
+    async def start(self,viewport=None):
+        async with self.lock:return await self._start_locked(viewport)
+    async def _start_locked(self,viewport=None):
+        if self.active:return self.status()
+        need(not self.provisioning,'Wait for identity preparation to finish')
+        need(self.ready(),'Open CarDash V3 on the phone and tap Prepare Native Preview first')
+        transport=transport_status(self.state);need(transport['ready'],transport.get('error','Transport unavailable'))
+        if self.audio_output=='phone':
+            routing=audio_route_status();need(routing['ready'],routing.get('error','Audio routing unavailable'))
+        self.display=geometry(viewport);self.actual_source=None;self.display_verified=False;self.image_error='';self.image_sequence=0
+        self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
+        need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
+        self.frames=0;self.codec=None;self.muxer=None;self.pending=None;self.native={};self.error='';self.native_error='';self.capture_bytes=0
+        self.reset_video_history();self.last_keyframe_request=-float('inf')
+        self.audio_history=[];self.audio_ducked=False;self.clock_offset=0
+        self.pending_commands.clear()
+        self.generation=os.urandom(16).hex()
+        if self.args.capture:
+            folder=Path(self.args.capture);folder.mkdir(parents=True,exist_ok=True,mode=0o700)
+            self.capture=(folder/'native.mp4').open('wb')
+        public=crypto.public(bytes.fromhex(self.identity['seed'])).hex()
+        try:
+            self.audio_lease.refresh(self.audio_output=='phone')
+            self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'0',stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
+        except BaseException:
+            try:self.audio_lease.clear()
+            except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
+            if self.capture:self.capture.close();self.capture=None
+            self.generation=None
+            raise
+        self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False
+        self.native_watch=asyncio.create_task(self.watch_helper(self.helper,self.generation))
+        self.log('native_start',pid=self.helper.pid,audioOutput=self.audio_output,requestedViewport=self.display.viewport,display={'width':self.display.width,'height':self.display.height,'widthPhysical':260,'heightPhysical':self.display.physical_height});return self.status()
     async def watch_helper(self,child,generation):
         try:
             while True:
@@ -210,32 +224,44 @@ class Receiver:
                 await self.stop('native_helper_ended',generation=generation)
         except asyncio.CancelledError:pass
     async def stop(self,reason='user_stop',generation=None):
+        async with self.lock:return await self._stop_locked(reason,generation)
+    async def _stop_locked(self,reason='user_stop',generation=None):
+        # Disconnect callbacks can wait behind another Stop/Start. Their
+        # captured session must still own the receiver after that wait.
+        if generation is not None and generation!=self.generation:return False
+        try:self.audio_lease.clear()
+        except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
+        child=self.helper;self.helper=None;self.active=False;self.generation=None
+        await self.close_images()
+        if child and child.returncode is None:
+            child.terminate()
+            try:await asyncio.wait_for(child.wait(),4)
+            except asyncio.TimeoutError:child.kill();await child.wait()
+        for writer in [self.control,self.event,self.video]:
+            if writer:writer.close()
+        for queue in list(self.viewers):
+            try:queue.put_nowait(None)
+            except asyncio.QueueFull:pass
+        for channel in self.audio_channels.values():
+            self.audio_history.append(channel.status());channel.close()
+        self.audio_channels.clear();self.audio_ducked=False
+        for queue in list(self.audio_viewers):
+            try:queue.put_nowait(None)
+            except asyncio.QueueFull:pass
+        self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
+        if self.capture:self.capture.close();self.capture=None
+        self.log('native_stop',reason=reason,frames=self.frames)
+        return True
+    async def resize(self,value):
+        # Validate before ending anything, then re-check generation under the
+        # same lock held through teardown and the replacement native request.
+        need(value.get('viewport') is not None,'Viewport is required')
+        target=geometry(value['viewport'])
         async with self.lock:
-            # Disconnect callbacks can wait behind another Stop/Start. Their
-            # captured session must still own the receiver after that wait.
-            if generation is not None and generation!=self.generation:return False
-            try:self.audio_lease.clear()
-            except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
-            child=self.helper;self.helper=None;self.active=False;self.generation=None
-            if child and child.returncode is None:
-                child.terminate()
-                try:await asyncio.wait_for(child.wait(),4)
-                except asyncio.TimeoutError:child.kill();await child.wait()
-            for writer in [self.control,self.event,self.video]:
-                if writer:writer.close()
-            for queue in list(self.viewers):
-                try:queue.put_nowait(None)
-                except asyncio.QueueFull:pass
-            for channel in self.audio_channels.values():
-                self.audio_history.append(channel.status());channel.close()
-            self.audio_channels.clear();self.audio_ducked=False
-            for queue in list(self.audio_viewers):
-                try:queue.put_nowait(None)
-                except asyncio.QueueFull:pass
-            self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
-            if self.capture:self.capture.close();self.capture=None
-            self.log('native_stop',reason=reason,frames=self.frames)
-            return True
+            need(self.active and value.get('session')==self.generation,'Stale native session')
+            if (target.width,target.height)==(self.display.width,self.display.height):return self.status()
+            await self._stop_locked('viewport_changed',value['session'])
+            return await self._start_locked(target.viewport)
     async def command(self,value,generation=None):
         expected=self.generation if generation is None else generation
         async with self.command_lock:
@@ -252,7 +278,7 @@ class Receiver:
         x,y,down=value.get('x'),value.get('y'),value.get('down')
         need(type(x) in (float,int) and type(y) in (float,int) and all(math.isfinite(v) and 0<=v<=1 for v in (x,y)) and type(down) is bool,'Touch coordinates invalid')
         need(self.frames>0,'Native video has not started')
-        report=bytearray(12);report[6]=1;report[1]=int(down);struct.pack_into('<HH',report,2,round(x*1280),round(y*720))
+        report=bytearray(12);report[6]=1;report[1]=int(down);struct.pack_into('<HH',report,2,round(x*self.display.width),round(y*self.display.height))
         seq=await self.command({'type':'hidSendReport','uuid':'2a2a2a2a','hidReport':bytes(report)},value['session'])
         self.log('native_touch',sequence=seq,x=x,y=y,down=down)
         if value['session']==self.generation:self.last_pointer={'x':x,'y':y,'down':False,'session':value['session']} if down else None
@@ -301,12 +327,12 @@ class Receiver:
             if state['dropped_packets']!=previous and (previous==0 or state['dropped_packets']//100>previous//100):
                 self.log('audio_viewer_lag',reason=reason,dropped_packets=state['dropped_packets'],dropped_bytes=state['dropped_bytes'],queued_bytes=state['bytes'],queued_packets=queue.qsize())
             state['bytes']+=len(packet);state['next_record']+=1;queue.put_nowait((state['next_record'],packet))
-    async def audio_viewer(self,writer,generation,reader=None):
+    async def audio_viewer(self,writer,generation,reader=None,response_headers=None):
         need(self.audio_output=='browser','Browser audio is disabled')
         need(self.active and generation==self.generation,'Stale native session');need(len(self.audio_viewers)<2,'Two audio viewers are already connected')
         queue=asyncio.Queue(maxsize=64);state={'bytes':0,'closed':False,'reset_lanes':{},'next_record':0,'dropped_packets':0,'dropped_bytes':0};self.audio_viewers[queue]=state
         try:
-            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n');await asyncio.wait_for(writer.drain(),2)
+            writer.write(self.stream_headers('application/octet-stream',response_headers));await asyncio.wait_for(writer.drain(),2)
             while self.active and generation==self.generation and not state['closed'] and not (reader and reader.at_eof()):
                 try:packet=await asyncio.wait_for(queue.get(),2)
                 except asyncio.TimeoutError:
@@ -455,15 +481,25 @@ class Receiver:
         return True
     def configure(self,config):
         if self.muxer and self.muxer.config==config:return
-        self.muxer=Muxer(config,1280,720);self.codec=self.muxer.codec;self.initial=self.muxer.initialization();self.pending=None
+        self.invalidate_images('configuration_changed')
+        self.display_verified=False
+        width,height=avc_dimensions(config);self.actual_source={'width':width,'height':height}
+        need((width,height)==(self.display.width,self.display.height),f'Native display returned {width}x{height}; requested {self.display.width}x{self.display.height}')
+        self.display_verified=True
+        self.muxer=Muxer(config,width,height);self.codec=self.muxer.codec;self.initial=self.muxer.initialization();self.pending=None
         self.reset_video_history()
-        self.log('native_video_config',codec=self.codec)
+        self.log('native_video_config',codec=self.codec,width=width,height=height)
         if self.capture:self.capture.write(self.initial)
         for q in list(self.viewers):
             try:q.put_nowait(None)
             except asyncio.QueueFull:pass
     def frame(self,data,timestamp):
         key=keyframe(data)
+        owner=self.images
+        if owner and self.image_current(owner,self.generation):
+            try:owner['decoder'].feed(data,timestamp)
+            except Exception as e:
+                self.image_error=str(e)[:256];self.log('image_feed_error',error=self.image_error);self.invalidate_images('feed_error')
         if self.pending:
             old,ts,oldkey=self.pending;fragment=self.muxer.fragment(old,ts,timestamp)
             if fragment:
@@ -528,13 +564,15 @@ class Receiver:
             # GOP needs a bounded recovery point for safe browser eviction, but
             # healthy heartbeats must not repeatedly rebuild the encoder.
             now=time.monotonic()
-            if self.viewers and self.event and self.video_last_idr_at and (self.video_gop_bytes>8*1024*1024 or now-self.video_last_idr_at>30):
+            await self.expire_images(now)
+            if (self.viewers or self.images) and self.event and self.video_last_idr_at and (self.video_gop_bytes>8*1024*1024 or now-self.video_last_idr_at>30):
                 try:await self.request_keyframe(generation,'long_gop')
                 except Exception as e:self.log('keyframe_error',error=str(e))
     async def action(self,value,local=False):
         action=value.get('action')
         if action=='status':return self.status()
-        if action=='start':return await self.start()
+        if action=='start':return await self.start(value.get('viewport'))
+        if action=='resize':return await self.resize(value)
         if action=='audio_output':return await self.set_audio_output(value.get('mode'))
         if action in ('stop','heartbeat') and not local:need(self.active and value.get('session')==self.generation,'Stale native session')
         if action=='stop':
@@ -573,7 +611,7 @@ class Receiver:
         finally:writer.close()
     async def http(self,reader,writer):
         if len(self.connections)>=16:writer.close();return
-        self.connections.add(writer)
+        self.connections.add(writer);cors={}
         try:
             peer=writer.get_extra_info('peername');need(peer and allowed_peer(peer[0],self.network),'Local network only')
             raw=await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'),5);need(len(raw)<=16384,'Header limit')
@@ -585,38 +623,166 @@ class Receiver:
             allowed={local_ip+':'+str(self.args.port)}
             if ipaddress.ip_address(peer[0]).is_loopback:allowed|={'localhost:'+str(self.args.port),'127.0.0.1:'+str(self.args.port)}
             need(host in allowed,'Host header rejected')
-            need(headers.get('origin','http://'+host)=='http://'+host,'Cross-origin request rejected')
-            need(headers.get('sec-fetch-site','same-origin') in ('same-origin','none'),'Cross-site request rejected')
+            origin=headers.get('origin','http://'+host);remote=origin!='http://'+host
+            if remote:
+                need(self.browser_access.trusted(origin),'Cross-origin request rejected')
+                cors=self.browser_access.response_headers(origin)
+                requested_method=headers.get('access-control-request-method','') if method=='OPTIONS' else method
+                need(self.browser_access.allowed(requested_method,path),'Cross-origin route or method rejected')
+                need(headers.get('sec-fetch-site','cross-site')=='cross-site','Cross-site request metadata rejected')
+            else:need(headers.get('sec-fetch-site','same-origin') in ('same-origin','none'),'Cross-site request rejected')
             need('transfer-encoding' not in headers,'Transfer encoding rejected')
             length=int(headers.get('content-length','0'));need(0<=length<=4096,'Request limit')
             body=await asyncio.wait_for(reader.readexactly(length),5) if length else b''
-            cookie=dict(v.strip().split('=',1) for v in headers.get('cookie','').split(';') if '=' in v)
-            authenticated=hmac.compare_digest(cookie.get('cdv3',''),self.token)
-            if method=='GET' and path in ('/','/client.js','/audio.js'):
+            if remote and method=='OPTIONS':
+                need(not body,'Preflight request body rejected')
+                extra=self.browser_access.preflight(origin,path,headers.get('access-control-request-method',''),headers.get('access-control-request-headers',''))
+                await self.reply(writer,204,b'',extra=extra);return
+            if remote and path=='/api/browser_session':
+                need(headers.get('content-type','').split(';',1)[0].strip().lower()=='application/json','Browser session requires JSON')
+                result=self.browser_access.issue(origin,json.loads(body or b'{}'))
+                await self.reply(writer,200,json.dumps(result).encode(),extra=cors);return
+            if remote:
+                self.browser_access.authorize(origin,headers.get('authorization',''));authenticated=True
+            else:
+                cookie=dict(v.strip().split('=',1) for v in headers.get('cookie','').split(';') if '=' in v)
+                authenticated=hmac.compare_digest(cookie.get('cdv3',''),self.token)
+            if method=='GET' and path in ('/','/client.js','/audio.js','/canvas-video.js','/transport.js'):
                 name='index.html' if path=='/' else path[1:];data=(ROOT.parent/'web'/name).read_bytes()
                 await self.reply(writer,200,data,'text/html' if path=='/' else 'text/javascript',{'Set-Cookie':f'cdv3={self.token}; HttpOnly; SameSite=Strict; Path=/'})
             elif not authenticated:await self.reply(writer,403,b'Open the CarDash page first','text/plain')
-            elif method=='GET' and path=='/api/status':await self.reply(writer,200,json.dumps(self.status()).encode())
+            elif method=='GET' and path=='/api/status':await self.reply(writer,200,json.dumps(self.status()).encode(),extra=cors)
             elif method=='GET' and path=='/video':
-                need(self.active and headers.get('x-cardash-session')==self.generation,'Stale native session');await self.viewer(writer,reader)
-            elif method=='GET' and path=='/audio':await self.audio_viewer(writer,headers.get('x-cardash-session'),reader)
+                need(self.active and headers.get('x-cardash-session')==self.generation,'Stale native session');await self.viewer(writer,reader,response_headers=cors)
+            elif method=='GET' and path=='/image':await self.image_viewer(writer,headers.get('x-cardash-session'),headers.get('x-cardash-frame','0'),reader,response_headers=cors)
+            elif method=='GET' and path=='/audio':await self.audio_viewer(writer,headers.get('x-cardash-session'),reader,response_headers=cors)
             elif method=='POST' and path.startswith('/api/'):
-                value=json.loads(body or b'{}');value['action']=path[5:];result=await self.action(value);await self.reply(writer,200,json.dumps(result).encode())
+                value=json.loads(body or b'{}');value['action']=path[5:];result=await self.action(value);await self.reply(writer,200,json.dumps(result).encode(),extra=cors)
             else:await self.reply(writer,404,b'Not found','text/plain')
         except Exception as e:
             self.log('browser_request_rejected',error=str(e))
-            try:await self.reply(writer,400,json.dumps({'error':str(e)}).encode())
+            try:await self.reply(writer,e.status if isinstance(e,BrowserAccessError) else 400,json.dumps({'error':str(e)}).encode(),extra=cors)
             except (ConnectionError,OSError,asyncio.TimeoutError):pass
         finally:self.connections.discard(writer);writer.close()
+    @staticmethod
+    def stream_headers(kind,extra=None):
+        values={'Content-Type':kind,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close',**(extra or {})}
+        return ('HTTP/1.1 200 OK\r\n'+''.join(k+': '+v+'\r\n' for k,v in values.items())+'\r\n').encode()
     async def reply(self,writer,status,data,kind='application/json',extra=None):
         values={'Content-Type':kind,'Content-Length':str(len(data)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close',**(extra or {})}
-        header=f'HTTP/1.1 {status} '+('OK' if status==200 else 'Error')+'\r\n'+''.join(k+': '+v+'\r\n' for k,v in values.items())+'\r\n'
+        header=f'HTTP/1.1 {status} '+({200:'OK',204:'No Content'}.get(status,'Error'))+'\r\n'+''.join(k+': '+v+'\r\n' for k,v in values.items())+'\r\n'
         writer.write(header.encode()+data);await asyncio.wait_for(writer.drain(),5)
-    async def viewer(self,writer,reader=None):
+    @staticmethod
+    def clean_image_stats(value):
+        allowed={'submitted','decoded','jpegFrames','inputDrops','decodedDrops','outputReplaced','decodeFailures','jpegFailures','pending','maxPending','latestSequence','latestBytes','workerBusy','waitingForKeyframe','hardwareAcceleration','lastStatus','width','height','fps'}
+        return {k:v for k,v in value.items() if k in allowed and type(v) is int and -(2**31)<=v<=10**16}
+    def image_stats(self):
+        owner=self.images
+        result={'active':bool(owner),'consumers':self.image_waiters,'error':self.image_error,'sequence':self.image_sequence}
+        if owner:
+            try:result.update(self.clean_image_stats(owner['decoder'].stats))
+            except Exception:result['error']='Native image statistics unavailable'
+        return result
+    def schedule_image_close(self,owner,reason):
+        if owner.get('closeTask'):return owner['closeTask']
+        async def close():
+            try:
+                def finish():
+                    owner['decoder'].close();return self.clean_image_stats(owner['decoder'].stats)
+                counters=await asyncio.to_thread(finish)
+                self.log('image_decoder_closed',reason=reason,stats=counters)
+            except Exception as e:self.log('image_close_error',error=str(e)[:256])
+        task=asyncio.create_task(close());owner['closeTask']=task;self.image_close_tasks.add(task);task.add_done_callback(self.image_close_tasks.discard);return task
+    def invalidate_images(self,reason):
+        # Synchronous configuration callbacks detach immediately. A constructor
+        # currently awaiting its worker observes this epoch before publishing.
+        self.image_epoch+=1;owner=self.images;self.images=None
+        if owner:self.schedule_image_close(owner,reason)
+    async def close_images(self,reason='session_end'):
+        async with self.image_lock:self.invalidate_images(reason)
+        pending=list(self.image_close_tasks)
+        if pending:await asyncio.gather(*pending,return_exceptions=True)
+    async def expire_images(self,now=None):
+        now=time.monotonic() if now is None else now
+        async with self.image_lock:
+            owner=self.images
+            if owner and now-owner['lastRequest']>10:self.invalidate_images('idle_timeout')
+            else:owner=None
+        if owner:await owner['closeTask']
+    def image_current(self,owner,generation):
+        return self.active and generation==self.generation and self.images is owner and self.muxer and owner['config']==self.muxer.config and self.display_verified
+    async def get_images(self,generation):
+        async with self.image_lock:
+            need(self.active and generation==self.generation,'Stale native session')
+            need(self.video and self.muxer and self.display_verified,'Native video is not ready')
+            if self.images:
+                need(self.images['session']==generation,'Stale image decoder')
+                self.images['lastRequest']=time.monotonic();return self.images,False
+            config=self.muxer.config;epoch=self.image_epoch;display=self.display
+            build=asyncio.create_task(asyncio.to_thread(create_image_decoder,config,display.width,display.height))
+            try:decoder=await asyncio.shield(build)
+            except asyncio.CancelledError:
+                # to_thread cannot cancel native construction. Retain its result
+                # long enough to close it; never publish it into a new session.
+                async def discard():
+                    try:
+                        decoder=await build;await asyncio.to_thread(decoder.close)
+                    except Exception as e:self.log('image_close_error',error=str(e)[:256])
+                task=asyncio.create_task(discard());self.image_close_tasks.add(task);task.add_done_callback(self.image_close_tasks.discard);raise
+            except Exception as e:
+                if generation==self.generation:self.image_error=str(e)[:256]
+                self.log('image_init_error',error=str(e)[:256]);raise
+            owner={'decoder':decoder,'session':generation,'config':config,'lastRequest':time.monotonic(),'responses':0,'sequenceBase':self.image_sequence}
+            if not self.active or generation!=self.generation or epoch!=self.image_epoch or not self.muxer or config!=self.muxer.config:
+                await self.schedule_image_close(owner,'stale_construction');raise ValueError('Stale native session or video configuration')
+            self.images=owner;self.image_error='';self.log('image_decoder_started',width=display.width,height=display.height,fps=10)
+            return owner,True
+    async def image_viewer(self,writer,generation,after='0',reader=None,response_headers=None):
+        need(self.active and generation==self.generation,'Stale native session')
+        need(isinstance(after,str) and after.isdigit() and len(after)<=16 and int(after)<=9007199254740991,'Image sequence invalid')
+        need(self.image_waiters<2,'Two image requests are already pending')
+        sequence=int(after);self.image_waiters+=1
+        try:
+            owner,created=await self.get_images(generation)
+            need(self.image_current(owner,generation),'Stale native session or video configuration')
+            self.had_viewer=True;self.last_heartbeat=time.monotonic()
+            if created:
+                try:await self.request_keyframe(generation,'viewer_join')
+                except Exception:
+                    if self.images is owner:self.invalidate_images('keyframe_error')
+                    raise
+            deadline=time.monotonic()+IMAGE_WAIT_SECONDS
+            while True:
+                need(self.image_current(owner,generation),'Stale native session or video configuration')
+                if writer.is_closing() or (reader and reader.at_eof()):return
+                frame=owner['decoder'].latest(max(0,sequence-owner['sequenceBase']))
+                if frame:
+                    local_sequence,timestamp,data=frame.get('sequence'),frame.get('timestamp'),frame.get('data')
+                    need(type(local_sequence) is int and local_sequence>0,'Native JPEG sequence invalid')
+                    n=owner['sequenceBase']+local_sequence
+                    need(sequence<n<=9007199254740991 and type(timestamp) is int and 0<=timestamp<2**63,'Native JPEG metadata invalid')
+                    need((frame.get('width'),frame.get('height'))==(self.display.width,self.display.height),'Native JPEG dimensions invalid')
+                    need(isinstance(data,bytes) and 4<=len(data)<=4*1024*1024 and data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9'),'Native JPEG payload invalid')
+                    # No await occurs between the final generation check and
+                    # reply() writing its response bytes to this exact socket.
+                    need(self.image_current(owner,generation),'Stale native session or video configuration')
+                    self.image_sequence=max(self.image_sequence,n)
+                    await self.reply(writer,200,data,'image/jpeg',{**(response_headers or {}),'X-CarDash-Frame':str(n),'X-CarDash-Time':str(timestamp)})
+                    owner['responses']+=1
+                    if owner['responses']==1 or owner['responses']%300==0:self.log('image_frame',sequence=n,bytes=len(data),width=frame['width'],height=frame['height'])
+                    return
+                if time.monotonic()>=deadline:
+                    await self.reply(writer,204,b'','image/jpeg',response_headers);return
+                await asyncio.sleep(.02)
+        except Exception as e:
+            if generation==self.generation:self.image_error=str(e)[:256]
+            raise
+        finally:self.image_waiters-=1
+    async def viewer(self,writer,reader=None,response_headers=None):
         need(self.active and self.video and self.muxer,'Native video is not ready');need(len(self.viewers)<2,'Two viewers are already connected')
         q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
         try:
-            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n');await asyncio.wait_for(writer.drain(),3)
+            writer.write(self.stream_headers('video/mp4',response_headers));await asyncio.wait_for(writer.drain(),3)
             if not self.active:return
             await self.request_keyframe(state['session'],'viewer_join')
             while self.active and state['session']==self.generation and not state['closed'] and not (reader and reader.at_eof()):

@@ -1,4 +1,20 @@
-# CarDash V3 beta 4 — validation
+# CarDash V3 beta 5 — validation
+
+## Beta 5 candidate — release held for the navigation issue
+
+Beta 5 replaces independent-axis stretching with a native display request based on the browser viewport's aspect ratio. The source is capped at 1,280 pixels wide, 960 pixels high and 921,600 total pixels, and remains at least as wide as tall in narrow previews. The browser preserves source proportions; iOS selects the app layout for the negotiated display. A four-column, three-row grid is not guaranteed. Viewport changes use a generation-checked native-session restart with the existing audio choice retained.
+
+The release retains the H.264/MediaSource video renderer. No vehicle-restriction bypass is included, and no Tesla Drive test has validated this release. Phone / Bluetooth remains the default, with Browser audio optional. After the beta 4 changes, the user reported successful audio over actual Tesla Bluetooth; that report does not establish steering-wheel controls or navigation prompts mixed with music.
+
+The MSE resizing candidate passed 98 Python tests, 54 JavaScript tests and one cross-process launcher test (153 total). New regressions cover coherent native display/HID/MP4 sizing, independently encoded cropped H.264 SPS, stale-session resize rejection, aspect-preserving touch mapping, request/body timeouts, and recovery from overlapping status/resize operations.
+
+On the supported physical iPhone, a fresh 773×601 browser session negotiated and decoded 1088×846 native video. Reviewed screenshots showed an unstretched five-column, three-row native Home grid, Waze and YouTube Music. Controlled viewport changes verified 773×499 → 1194×770, 773×601 → 1088×846, 1600×900 → 1280×720, then restoration to 1088×846, with no browser video errors. An earlier matrix attempt was discarded because another viewer changed the native geometry and the test harness used an outdated toolbar-height assumption.
+
+A 92.06-second continuously locked trial selected Waze, YouTube Music and Home through native input, then restarted at the controls-visible resolution and returned to full-screen resolution while still locked. Both screen-off and awake Lock Screen states were observed. Native display verification and browser playback recovered after both deliberate resizes with no browser video errors. Reviewed screenshots verified the selected interfaces. Playback remained paused; this was not a new music-quality or Bluetooth test.
+
+All 35 installed candidate payload hashes matched the package manifest. Preservation checks matched 585 original project entries, the original DEB, 203 outer-project files and 23 original installed files/preferences. The candidate is not published: the user’s report that the whole navigation display freezes in Tesla Drive remains a release blocker. The successful desktop/phone tests do not resolve or validate that vehicle behavior. The historical results below retain their original scope and are not beta 5 acceptance evidence.
+
+## Historical beta 4 validation
 
 Target: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 build 20G75, Dopamine rootless. Beta 4 uses the real phone with a Mac Chrome viewer forwarded over USB; inherited beta 3 Wi-Fi/USB-free evidence is recorded separately below. No new Tesla driving test was performed on the computer.
 
@@ -84,9 +100,9 @@ Audio overflow discards oldest records within a 64-record/256 KiB bound, preserv
 
 ## Remaining vehicle and compatibility checks
 
-Tesla's beta 4 viewport, video/input and Bluetooth routing, Personal Hotspot interruption/recovery, navigation voice prompts mixed with music, and long-duration thermal/battery behavior require testing in the car. USB-free startup and streaming have been exercised over home Wi-Fi. A minutes-long Mac-browser trial does not establish those results. Source resolution is fixed 1280×720 landscape; adaptive source resolution is not implemented. Microphone/Siri/call input is unsupported. Other phone models/iOS builds are unverified and rejected by the installer.
+Beta 5's native viewport sizing and Tesla video/input behavior, Personal Hotspot interruption/recovery, navigation voice prompts mixed with music, steering-wheel controls, and long-duration thermal/battery behavior require vehicle testing. USB-free startup and streaming have been exercised over home Wi-Fi, and the user separately reported successful Tesla Bluetooth audio after beta 4. Those results do not establish the remaining checks. Beta 5 adapts native source dimensions within a 1,280-pixel width, 960-pixel height and 921,600-pixel total budget; iOS determines the resulting app grid. The earlier fixed-resolution and stretched-display trials above remain historical beta 4 evidence. Microphone/Siri/call input is unsupported. Other phone models/iOS builds are unverified and rejected by the installer.
 
-CarBridge and Immortalizer were preexisting third-party packages. Full-app interfaces shown during these trials use CarBridge; this release does not replace or bundle it. Results without CarBridge must not be inferred. The historical beta 2 clean locked trial ran without Immortalizer injection; its files were restored afterward. Do not infer that the current beta 4 trial repeated that isolation. YouTube Music's installed old version shows an unsupported-version message, while its existing Now Playing playback remains usable on this device.
+CarBridge and Immortalizer were preexisting third-party packages. Full-app interfaces shown during these trials use CarBridge; this release does not replace or bundle it. Results without CarBridge must not be inferred. The historical beta 2 clean locked trial ran without Immortalizer injection; its files were restored afterward. Do not infer that the beta 4 trial repeated that isolation. YouTube Music's installed old version shows an unsupported-version message, while its existing Now Playing playback remains usable on this device.
 
 ## Release artifacts
 

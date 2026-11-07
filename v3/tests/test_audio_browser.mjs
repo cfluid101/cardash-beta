@@ -12,7 +12,7 @@ function frame({rate=48000, channels=2, lane=0, flags=2, sequence=1, samples=[32
   data[8]=channels;data[9]=lane;data.writeUInt16BE(flags,10);data.writeUInt32BE(sequence,12);
   samples.forEach((value,i)=>data.writeInt16LE(value,16+2*i));return data;
 }
-function fixture() {
+function fixture({hosted=false}={}) {
   const instances=[], requests=[];
   class Context {
     constructor() { this.currentTime=0;this.state='suspended';this.destination={};this.sources=[];this.gains=[];instances.push(this); }
@@ -34,6 +34,7 @@ function fixture() {
     return Promise.resolve({ok:true,status:200,body:{getReader(){return reader;}}});
   }
   const window={AudioContext:Context,addEventListener(){}};
+  if(hosted)window.CarDashTransport={fetch:(url,options)=>fetch(url,{...options,viaHostedAdapter:true})};
   vm.runInNewContext(code,{window,fetch,AbortController,Uint8Array,Float32Array,DataView,Map,Set,Math,Promise,Error});
   return {api:window.CarDashAudio,instances,requests};
 }
@@ -100,4 +101,11 @@ test('sequence wrap, explicit lane reset and context suspension discard stale so
   instances[0].state='suspended';requests[0].push(frame({sequence:1}));await settle();
   assert.equal(api.stats.sources,0);assert.equal(api.stats.droppedFrames,1);
   await api.enable();requests[0].push(frame({sequence:2}));await settle();assert.equal(api.stats.sources,1);api.stop();
+});
+
+
+test('hosted browser audio uses the shared authenticated transport adapter',async()=>{
+ const {api,requests}=fixture({hosted:true});await api.enable();await api.connect('hosted-native-session');
+ assert.equal(requests.length,1);assert.equal(requests[0].url,'/audio');assert.equal(requests[0].options.viaHostedAdapter,true);
+ assert.equal(requests[0].options.headers['X-CarDash-Session'],'hosted-native-session');api.stop();
 });

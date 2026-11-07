@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, Mock, patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from server import DISPLAY, Receiver
 
-CONFIG=bytes.fromhex('0164001fffe100046764001f01000268ee')
+from h264_fixture import configuration
+CONFIG=configuration()
 KEY=bytes.fromhex('000000026501')
 DELTA=bytes.fromhex('000000024101')
 

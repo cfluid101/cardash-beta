@@ -218,7 +218,7 @@
     (async () => {
       let reader;
       try {
-        const response = await fetch('/audio', {
+        const response = await (window.CarDashTransport ? window.CarDashTransport.fetch : fetch)('/audio', {
           signal: current.abort.signal, credentials: 'same-origin', cache: 'no-store',
           headers: { 'X-CarDash-Session': session }
         });
