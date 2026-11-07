@@ -4,11 +4,11 @@ Native CarPlay from a jailbroken iPhone to the Tesla browser over Personal Hotsp
 
 ## Current tester release: V3 Beta 5 — HTTPS3
 
-**[Download the tested DEB](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/com.cfluid.cardash.v3_3.0.0-beta.5-https.3_iphoneos-arm64.deb) · [Tester ZIP](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/CarDash-V3-HTTPS3-tester-pack.zip) · [Release and checksums](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3)**
+**[Download the experimental DEB](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/com.cfluid.cardash.v3_3.0.0-beta.5-https.3_iphoneos-arm64.deb) · [Tester ZIP](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/CarDash-V3-HTTPS3-tester-pack.zip) · [Release and checksums](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3)**
 
-**Supported test target: iPhone 8 Plus, iOS 16.6 build 20G75, Dopamine rootless.** Other models/builds are not validated; do not bypass the firmware checks. Full interfaces for non-CarPlay apps require separately installed CarBridge on the tested setup.
+**Open-testing revision 1:** installer model/firmware restrictions are removed. Other rootless arm64 devices can attempt installation; bundled binaries target iOS 16.0+. Actual runtime dependencies and native framework/instruction checks remain. Unmatched native adapters prevent a session from starting. iOS 17.6.1 is unverified, not newly ported. Full interfaces for non-CarPlay apps require separately installed CarBridge on the tested setup.
 
-The project owner reported the November 7, 2026 trial in a 2023 Tesla Model 3 (AMD Ryzen) was working nearly perfectly. This release keeps the exact tested DEB and remains a beta for broader testing.
+The project owner reported the November 7, 2026 trial in a 2023 Tesla Model 3 (AMD Ryzen) was working nearly perfectly. That trial used the prior build on iPhone 8 Plus / iOS 16.6 / 20G75. The current download is the revised experimental package, version `3.0.0~beta.5+https.3.open.1`; the original tested package remains available in the release rollback archive.
 
 ## Quick start
 
