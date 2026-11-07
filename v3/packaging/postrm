@@ -2,3 +2,9 @@
 export PATH=/var/jb/usr/bin:/var/jb/bin:/usr/bin:/bin
 uicache -u /var/jb/Applications/CarDashV3.app >/dev/null 2>&1 || true
 # Retain only V3's reports/identity on removal. No original/V2 paths are accessed.
+# On removal the injected image must leave the media process as well.
+case "${1:-}" in
+    remove|purge)
+        launchctl kickstart -k system/com.apple.mediaserverd >/dev/null 2>&1 || true
+        ;;
+esac

@@ -109,3 +109,15 @@ test('queued updateend does not trim a source buffer while another append is upd
  assert.equal(removals,1);assert.equal(f.run('nativeStats.trims'),1);assert.equal(f.run('nativeStats.videoErrors'),0);
  f.run('end()');
 });
+
+test('an active request with zero native frames is not labelled connected',async()=>{
+ const f=fixture({active:false});await settle();
+ f.service={active:true,session:'pending',codec:null,videoConnected:false,nativeFrames:0,native:{present:false,authenticated:false,activated:false}};
+ await f.run('poll()');await settle();
+ assert.match(f.elements.get('#status').textContent,/starting native session/i);
+ assert.doesNotMatch(f.elements.get('#status').textContent,/connected/);
+ f.service={native:{present:true,authenticated:true,activated:true}};
+ await f.run('poll()');await settle();
+ assert.match(f.elements.get('#status').textContent,/waiting for native video/i);
+ f.run('end()');
+});

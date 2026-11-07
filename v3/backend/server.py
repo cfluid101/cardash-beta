@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Phone-resident native receiver. Loopback protocol + local-hotspot viewer."""
+import sys
+
+def startup_phase(phase):
+    # Fixed phase names only: no verbose imports, paths, keys or session data.
+    if __name__=='__main__':print('[CarDash V3 startup] '+phase,file=sys.stderr,flush=True)
+
+startup_phase('python_entry')
 import argparse
 import asyncio
 import ctypes
@@ -15,7 +22,6 @@ import signal
 import stat
 import socket
 import struct
-import sys
 import time
 import uuid
 import crypto
@@ -23,9 +29,13 @@ from protocol import Pairing,ControlCipher,RtspParser,ScreenReceiver,mfi_sap,nee
 from media import Muxer,keyframe
 from provision import CERT_SHA256
 from audio_transport import AudioChannel
+from network import TeslaNetwork,allowed_peer
+from transport import transport_status,startup_failure
+
+startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.2'
+VERSION='3.0.0-beta.3'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 
 def plist(data):return plistlib.dumps(data,fmt=plistlib.FMT_BINARY,sort_keys=False)
@@ -43,7 +53,7 @@ class Receiver:
         else:self.identity={'id':str(uuid.uuid4()),'seed':os.urandom(32).hex(),'peers':{}};self.save_identity()
         self.token=os.urandom(32).hex();self.lock=asyncio.Lock();self.command_lock=asyncio.Lock()
         self.helper=None;self.active=False;self.started=0;self.last_heartbeat=0;self.had_viewer=False
-        self.error='';self.native={};self.frames=0;self.codec=None;self.muxer=None;self.pending=None
+        self.error='';self.native_error='';self.native={};self.frames=0;self.codec=None;self.muxer=None;self.pending=None
         self.control=None;self.event=None;self.video=None;self.pair=None;self.screen_key=None;self.ec=None
         self.viewers={};self.connections=set();self.sequence=0;self.native_watch=None;self.provisioning=False
         self.capture=None;self.capture_bytes=0;self.last_pointer=None
@@ -51,6 +61,7 @@ class Receiver:
         self.generation=None
         self.audio_channels={};self.audio_history=[];self.audio_viewers={};self.audio_ducked=False;self.clock_offset=0
         self.pending_commands={}
+        self.network=TeslaNetwork(args.port)
         self.log('service_started',version=VERSION)
     def log(self,event,**values):
         path=self.state/'diagnostic.ndjson'
@@ -63,7 +74,7 @@ class Receiver:
     def ready(self):
         return all((self.state/'accessory'/x).is_file() for x in ['identity.pk8','certificate.p7b'])
     def status(self):
-        return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,
+        return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,network=self.network.status,transport=transport_status(self.state),
                     nativeFrames=self.frames,codec=self.codec,videoConnected=bool(self.video),eventConnected=bool(self.event),
                     native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
                     audioSupported=True,microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=1280,sourceHeight=720)
@@ -116,9 +127,10 @@ class Receiver:
             if self.active:return self.status()
             need(not self.provisioning,'Wait for identity preparation to finish')
             need(self.ready(),'Open CarDash V3 on the phone and tap Prepare Native Preview first')
+            transport=transport_status(self.state);need(transport['ready'],transport.get('error','Transport unavailable'))
             self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
             need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
-            self.frames=0;self.codec=None;self.muxer=None;self.pending=None;self.native={};self.error='';self.capture_bytes=0
+            self.frames=0;self.codec=None;self.muxer=None;self.pending=None;self.native={};self.error='';self.native_error='';self.capture_bytes=0
             self.audio_history=[];self.audio_ducked=False;self.clock_offset=0
             self.pending_commands.clear()
             self.generation=os.urandom(16).hex()
@@ -141,15 +153,20 @@ class Receiver:
                         if value.get('event')=='session_observation':self.native={k:value[k] for k in ['present','authenticated','activated']}
                         elif value.get('event')=='cleanup' and value.get('session_present') is False:self.native={'present':False,'authenticated':False,'activated':False}
                         elif value.get('event')=='timing_sync':self.clock_offset=float(value['offset_seconds'])
+                    if self.generation==generation and value.get('event')=='native_completion' and value.get('success') is False:
+                        self.native_error=value.get('error') or 'CarKit returned success=false without an error description'
                     self.log('native_helper',detail=value)
                 except (ValueError,KeyError):self.log('native_helper_output',text=line.decode(errors='replace')[:2000])
             code=await child.wait()
             if self.helper is child:
                 if code:self.error=f'Native helper exited ({code}); export diagnostics'
-                await self.stop('native_helper_ended')
+                await self.stop('native_helper_ended',generation=generation)
         except asyncio.CancelledError:pass
-    async def stop(self,reason='user_stop'):
+    async def stop(self,reason='user_stop',generation=None):
         async with self.lock:
+            # Disconnect callbacks can wait behind another Stop/Start. Their
+            # captured session must still own the receiver after that wait.
+            if generation is not None and generation!=self.generation:return False
             child=self.helper;self.helper=None;self.active=False;self.generation=None
             if child and child.returncode is None:
                 child.terminate()
@@ -169,6 +186,7 @@ class Receiver:
             self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
             if self.capture:self.capture.close();self.capture=None
             self.log('native_stop',reason=reason,frames=self.frames)
+            return True
     async def command(self,value,generation=None):
         expected=self.generation if generation is None else generation
         async with self.command_lock:
@@ -179,7 +197,6 @@ class Receiver:
             if len(self.pending_commands)>128:self.pending_commands.pop(next(iter(self.pending_commands)))
             wire=(f'POST /command RTSP/1.0\r\nCSeq: {self.sequence}\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {len(body)}\r\n\r\n').encode()+body
             self.event.write(self.ec.encode(wire));await asyncio.wait_for(self.event.drain(),2)
-            if value['type']=='hidSendReport':self.log('native_touch',sequence=self.sequence)
             return self.sequence
     async def touch(self,value):
         need(self.active and value.get('session')==self.generation,'Stale native session')
@@ -188,6 +205,7 @@ class Receiver:
         need(self.frames>0,'Native video has not started')
         report=bytearray(12);report[6]=1;report[1]=int(down);struct.pack_into('<HH',report,2,round(x*1280),round(y*720))
         seq=await self.command({'type':'hidSendReport','uuid':'2a2a2a2a','hidReport':bytes(report)},value['session'])
+        self.log('native_touch',sequence=seq,x=x,y=y,down=down)
         if value['session']==self.generation:self.last_pointer={'x':x,'y':y,'down':False,'session':value['session']} if down else None
         return {'sequence':seq}
     async def modes(self,generation):
@@ -309,7 +327,48 @@ class Receiver:
             writer.close()
             if self.control is writer:
                 self.control=None
-                if self.active:asyncio.create_task(self.stop('native_control_disconnected'))
+                if self.active:asyncio.create_task(self.stop('native_control_disconnected',generation=generation))
+    def event_response(self,request):
+        sequence=request['headers'].get('cseq')
+        kind=self.pending_commands.pop(sequence,None) if sequence is not None else None
+        body=request['body'];issues=[];unparsed=False;visited=0
+        # Do not serialize a raw reply: even a malformed/error response may
+        # contain identity material. Only numeric protocol errors are retained.
+        # Unknown property names and text/data values are always redacted.
+        def inspect(value,path=(),depth=0,error_context=False):
+            nonlocal visited
+            if depth>5 or visited>=64 or len(issues)>=16:return
+            visited+=1
+            if isinstance(value,dict):
+                for index,(key,child) in enumerate(value.items()):
+                    if index>=16 or visited>=64 or len(issues)>=16:break
+                    key=key.lower() if isinstance(key,str) else ''
+                    known=key in ('error','errors','status','code','params','result','details')
+                    child_path=path+(key if known else '*',)
+                    flagged=key in ('error','status') or (error_context and key=='code')
+                    if flagged and type(child) in (int,float,bool) and child and math.isfinite(child):
+                        issues.append({'path':'.'.join(child_path),'code':child})
+                    elif flagged and isinstance(child,str) and len(child)<=20 and child.isascii() and child.strip().lstrip('+-').isdigit():
+                        code=int(child)
+                        if code:issues.append({'path':'.'.join(child_path),'code':code})
+                    elif flagged and isinstance(child,(str,bytes)) and child:
+                        issues.append({'path':'.'.join(child_path),'valueType':type(child).__name__,'redacted':True})
+                    if isinstance(child,(dict,list)):
+                        inspect(child,child_path,depth+1,error_context or key in ('error','errors','status'))
+            elif isinstance(value,list):
+                for index,child in enumerate(value):
+                    if index>=16 or visited>=64 or len(issues)>=16:break
+                    inspect(child,path+('[]',),depth+1,error_context)
+        if body:
+            if len(body)>65536:unparsed=True
+            else:
+                try:inspect(plistlib.loads(body))
+                except Exception:unparsed=True
+        status=request['path']
+        self.log('native_event_response',status=status,sequence=sequence[:64] if sequence is not None else None,
+                 missingCSeq=sequence is None,sequenceTruncated=sequence is not None and len(sequence)>64,
+                 command=kind,bodyBytes=len(body),bodyUnparsed=unparsed,bodyErrors=issues,
+                 rejected=not status.startswith('2') or bool(issues))
     async def event_client(self,reader,writer):
         if not self.pair or not self.pair.verified or self.event:writer.close();return
         self.event=writer;shared=self.pair.shared;ec=ControlCipher(crypto.hkdf(shared,'Events-Salt','Events-Read-Encryption-Key'),crypto.hkdf(shared,'Events-Salt','Events-Write-Encryption-Key'));self.ec=ec;parser=RtspParser();generation=self.generation;self.log('event_connected')
@@ -320,11 +379,7 @@ class Receiver:
                 for request in parser.push(ec.decode(data)):
                     if generation!=self.generation:break
                     if request['method']=='RESPONSE':
-                        kind=self.pending_commands.pop(request['headers'].get('cseq',''),None)
-                        if kind=='changeModes' or (not kind and request['body']):
-                            try:reply=plistlib.loads(request['body']) if request['body'] else {}
-                            except Exception:reply={'unparsedBytes':len(request['body'])}
-                            self.log('mode_response',command=kind,status=request['path'],sequence=request['headers'].get('cseq'),reply=reply)
+                        self.event_response(request)
                     else:
                         if request['path']=='/command':self.native_command(request['body'])
                         async with self.command_lock:
@@ -334,7 +389,7 @@ class Receiver:
         finally:
             writer.close()
             if self.event is writer:self.event=None
-            if self.active and generation==self.generation:asyncio.create_task(self.stop('native_event_disconnected'))
+            if self.active and generation==self.generation:asyncio.create_task(self.stop('native_event_disconnected',generation=generation))
     def configure(self,config):
         if self.muxer and self.muxer.config==config:return
         self.muxer=Muxer(config,1280,720);self.codec=self.muxer.codec;self.initial=self.muxer.initialization();self.pending=None
@@ -380,16 +435,21 @@ class Receiver:
             writer.close()
             if self.video is writer:self.video=None
             self.log('video_closed',frames=self.frames)
-            if self.active and generation==self.generation:asyncio.create_task(self.stop('native_video_disconnected'))
+            if self.active and generation==self.generation:asyncio.create_task(self.stop('native_video_disconnected',generation=generation))
     async def ticker(self):
         while True:
             await asyncio.sleep(2)
             if not self.active:continue
+            generation=self.generation
+            failure=startup_failure(self.active,self.frames,self.started,time.monotonic(),self.native_error)
+            if failure:
+                self.error=failure;self.log('native_start_failed',error=failure,native=self.native)
+                await self.stop('native_start_failed',generation=generation);continue
             elapsed=time.monotonic()-self.last_heartbeat
-            if elapsed>(12 if self.had_viewer else 45):await self.stop('browser_timeout');continue
+            if elapsed>(12 if self.had_viewer else 45):await self.stop('browser_timeout',generation=generation);continue
             if self.helper and self.helper.stdin:
                 try:self.helper.stdin.write(b'H');await asyncio.wait_for(self.helper.stdin.drain(),1)
-                except (BrokenPipeError,ConnectionError,asyncio.TimeoutError):await self.stop('native_lease_failed');continue
+                except (BrokenPipeError,ConnectionError,asyncio.TimeoutError):await self.stop('native_lease_failed',generation=generation);continue
             if self.viewers and self.event:
                 try:await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}})
                 except Exception as e:self.log('keyframe_error',error=str(e))
@@ -398,7 +458,9 @@ class Receiver:
         if action=='status':return self.status()
         if action=='start':return await self.start()
         if action in ('stop','heartbeat') and not local:need(self.active and value.get('session')==self.generation,'Stale native session')
-        if action=='stop':await self.stop();return self.status()
+        if action=='stop':
+            stopped=await self.stop(generation=None if local else value.get('session'))
+            need(stopped,'Stale native session');return self.status()
         if action=='heartbeat':self.last_heartbeat=time.monotonic();self.had_viewer=True;return self.status()
         if action=='touch':return await self.touch(value)
         if action=='prepare' and local:await self.prepare();return self.status()
@@ -433,7 +495,7 @@ class Receiver:
         if len(self.connections)>=16:writer.close();return
         self.connections.add(writer)
         try:
-            peer=writer.get_extra_info('peername');need(peer and ipaddress.ip_address(peer[0]).is_private,'Local network only')
+            peer=writer.get_extra_info('peername');need(peer and allowed_peer(peer[0],self.network),'Local network only')
             raw=await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'),5);need(len(raw)<=16384,'Header limit')
             lines=raw.decode('ascii').split('\r\n');method,path,_=lines.pop(0).split(' ');headers={}
             for line in lines:
@@ -488,8 +550,16 @@ class Receiver:
             if self.last_pointer and state['session']==self.generation:
                 try:await self.touch(self.last_pointer)
                 except Exception:pass
+    async def network_monitor(self):
+        previous=None
+        while True:
+            value=await asyncio.to_thread(self.network.refresh)
+            state={k:v for k,v in value.items() if k!='added'}
+            if state!=previous:
+                self.log('tesla_network',**value);previous=state
+            await asyncio.sleep(10)
     async def run(self):
-        servers=[];ipcpath=self.state/'control.sock'
+        servers=[];ipcpath=self.state/'control.sock';network_task=None
         # Process-wide lock in main makes an existing socket stale only for this service.
         if ipcpath.exists():ipcpath.unlink()
         try:
@@ -499,10 +569,14 @@ class Receiver:
             servers.append(await asyncio.start_unix_server(self.ipc,str(ipcpath),limit=8192));os.chmod(ipcpath,0o660)
             if os.getuid()==0:os.chown(ipcpath,0,501)
             self.log('listening',port=self.args.port)
+            startup_phase('ipc_listening')
+            network_task=asyncio.create_task(self.network_monitor())
             ticker=asyncio.create_task(self.ticker());stop=asyncio.Event();loop=asyncio.get_running_loop()
             for sig in (signal.SIGTERM,signal.SIGINT):loop.add_signal_handler(sig,stop.set)
             await stop.wait();ticker.cancel()
         finally:
+            if network_task:
+                network_task.cancel();await asyncio.gather(network_task,return_exceptions=True)
             if self.provision_child and self.provision_child.returncode is None:
                 self.provision_child.kill();await self.provision_child.wait()
             await self.stop('service_stop')
@@ -516,8 +590,10 @@ def main():
     os.umask(0o077);Path(args.state).mkdir(parents=True,exist_ok=True,mode=0o750)
     with (Path(args.state)/'service.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        startup_phase('configuring_memory_budget')
         from memory_budget import configure
         budget=configure()
+        startup_phase('memory_budget_ready')
         async def serve():
             receiver=Receiver(args);receiver.log('memory_budget',**budget)
             await receiver.run()

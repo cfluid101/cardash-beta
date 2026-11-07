@@ -141,7 +141,8 @@ async function poll(){
    if(inputSession!==s.session){end();inputSession=s.session;audioError='';}
    carplayActive=true;const session=s.session;
    await api('heartbeat',{session});if(epoch!==commandEpoch||session!==inputSession)return;
-   baseStatus=s.error||`Native CarPlay · ${Math.floor(s.sessionSeconds/60)}m ${s.sessionSeconds%60}s · connected`;
+   const phase=!s.native?.authenticated||!s.native?.activated?'starting native session':!s.nativeFrames?'waiting for native video':!nativeStats.decodedFrames?'receiving video; waiting for browser playback':'playing';
+   baseStatus=s.error||`Native CarPlay · ${Math.floor(s.sessionSeconds/60)}m ${s.sessionSeconds%60}s · ${phase}`;
    if(s.codec&&s.videoConnected&&closed)connect(s.codec,session);
    connectSound(session);
   }else{

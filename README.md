@@ -1,6 +1,6 @@
 # CarDash V3 Native Beta
 
-For **CarDash V3 beta 2**, see [setup and compatibility](v3/README.md), [release validation](v3/TEST-RESULTS.md) and [beta downloads](https://github.com/cfluid101/cardash-beta/releases). V3 runs native CarPlay video, touch and audio output on the phone, with no fixed session-duration limit. The supported target is iPhone 8 Plus, iOS 16.6 build 20G75, rootless. Full-app interfaces tested with CarBridge require that separate tweak; microphone input is not supported. Tesla vehicle testing remains necessary.
+For **CarDash V3 beta 3**, see [setup and compatibility](v3/README.md), [release validation](v3/TEST-RESULTS.md) and [beta downloads](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.3). V3 runs native CarPlay video, touch and audio output on the phone, with no fixed session-duration limit. The supported target is iPhone 8 Plus, iOS 16.6 build 20G75, rootless. Full-app interfaces tested with CarBridge require that separate tweak; microphone input is not supported. Tesla vehicle testing remains necessary.
 
 ## Historical CarPlay Diagnostics 0.1.3
 
