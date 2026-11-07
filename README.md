@@ -1,31 +1,25 @@
-# CarDash beta
+# CarDash V3 beta
 
-CarDash is a CarPlay-style dashboard for your car's web browser. Your jailbroken iPhone serves it over its own
-Personal Hotspot. It was built for the Tesla browser, and any device on the hotspot can open it.
+Native CarPlay from a jailbroken iPhone to the Tesla browser over Personal Hotspot.
 
-## Download CarDash 1.0.2 beta
+## Current tester release: V3 Beta 5 — HTTPS3
 
-- **[Install on the iPhone (.deb, 164 KB)](https://github.com/cfluid101/cardash-beta/releases/download/v1.0.2-beta/com.cfluid.cardash_1.0.2_iphoneos-arm64.deb):**
-  open this link in Safari on the iPhone, then open the download in Sileo, Zebra or Filza.
-- **[Tester pack (.zip, 167 KB)](https://github.com/cfluid101/cardash-beta/releases/download/v1.0.2-beta/CarDash-1.0.2-beta.zip):**
-  the same `.deb` plus `README.txt`, which has the full instructions and the checklist of what to report.
+**[Download the tested DEB](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/com.cfluid.cardash.v3_3.0.0-beta.5-https.3_iphoneos-arm64.deb) · [Tester ZIP](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/CarDash-V3-HTTPS3-tester-pack.zip) · [Release and checksums](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3)**
 
-**Requirements:**
-- A rootless jailbreak on iOS 15 or later, such as Dopamine or palera1n rootless.
-- PreferenceLoader.
-- Personal Hotspot.
+**Supported test target: iPhone 8 Plus, iOS 16.6 build 20G75, Dopamine rootless.** Other models/builds are not validated; do not bypass the firmware checks. Full interfaces for non-CarPlay apps require separately installed CarBridge on the tested setup.
 
-**Quick start:**
-1. Install the `.deb`, then turn on Personal Hotspot and connect your car or device to it.
-2. Open CarDash in the browser:
-   - **Tesla:** `http://100.99.10.1:8765/` (Tesla's browser blocks private addresses such as 172.20.10.1)
-   - **Phones and tablets:** `http://172.20.10.1:8765/` (the Tesla address works too)
-3. Choose apps in **Settings → CarDash**.
-4. If something doesn't work, open `http://127.0.0.1:8765/status` in Safari on the CarDash iPhone and send a
-   screenshot.
+The project owner reported the November 7, 2026 trial in a 2023 Tesla Model 3 (AMD Ryzen) was working nearly perfectly. This release keeps the exact tested DEB and remains a beta for broader testing.
 
-> **Security:** anyone connected to your hotspot can see and control your iPhone through CarDash. Use a strong
-> hotspot password.
+## Quick start
 
-This is a beta and not real CarPlay. Use it at your own risk. Older versions are on the
-[Releases](https://github.com/cfluid101/cardash-beta/releases) page.
+1. Install the DEB using Sileo or another dependency-aware package manager.
+2. Open **CarDash V3** and complete **Prepare CarPlay** once if setup is not already complete.
+3. Connect the Tesla to the iPhone Personal Hotspot and open the **[HTTPS3 viewer](https://cfluid101.github.io/cardash-beta/option1/?v=https3)**.
+4. Enter **`http://100.99.10.2:8890/`**, allow Local Network Access, then **Connect → Start**.
+5. Keep Audio on **Device output** for the phone's selected Tesla Bluetooth route. Browser audio is optional.
+
+Read the **[tester guide](docs/HTTPS3-TESTER-GUIDE.md)** for requirements, the 20–30 minute test checklist, diagnostics and rollback. Microphone/Siri voice input is not implemented. There is no setup code; the first unlock after reboot is still required.
+
+GitHub serves static viewer files. Video and controls travel directly to the local iPhone, without a cloud media relay.
+
+[Source and validation](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3) · [Historical V1 instructions](docs/LEGACY-V1.md) · [All releases](https://github.com/cfluid101/cardash-beta/releases)
