@@ -17,7 +17,7 @@ codesign --force --sign - build/v3/host/libcardashcrypto.dylib
 xcrun clang -dynamiclib -Wall -Wextra -Werror v3/native/AudioDecode.c -framework AudioToolbox -o build/v3/host/libcardashaudio.dylib
 codesign --force --sign - build/v3/host/libcardashaudio.dylib
 CDV3_CRYPTO="$PWD/build/v3/host/libcardashcrypto.dylib" CDV3_AUDIO="$PWD/build/v3/host/libcardashaudio.dylib" python3 -m unittest discover -s v3/tests
-node --test v3/tests/test_audio_browser.mjs v3/tests/test_client_recovery.mjs
+node --test v3/tests/test_*.mjs
 node --test receiver/test/*.test.mjs
 python3 receiver/test/session_lock_test.py
 ```
@@ -34,4 +34,8 @@ The optional-audio route adapter (`AudioRoute.mm`, `AudioVM.h`) requires MediaEx
 
 Beta 5's display geometry is negotiated per native session from the browser viewport. The geometry budget is at most 1,280 pixels wide, 960 pixels high and 921,600 total pixels; dimensions are even and the source remains at least as wide as tall. Native display declarations, HID bounds and MP4 dimensions must agree with the actual H.264 SPS. Browser presentation preserves aspect ratio, and iOS chooses the app grid. A fixed four-column layout is not a build guarantee. Viewport changes restart the owned native session; preserve generation checks and the selected audio output.
 
-The release keeps H.264 in fragmented MP4 with the existing MediaSource renderer. It includes no vehicle-restriction bypass. The browser retains random-access points reported from emitted MP4 fragments. It must not remove a range in the current GOP: MSE may extend removal through the next random-access point. Keep the one-tick safety margin and stale-session ownership checks. iOS’s wire-level `forceKeyFrame` restarts its screen bitstream, so continuous heartbeat-driven encoder resets are prohibited; only joining viewers and bounded long-GOP recovery request them.
+HTTPS2 adds an experimental hosted frontend at `https://cfluid101.github.io/cardash-beta/option1/?v=https2`. Static assets use relative paths. The approved HTTPS origin obtains a memory-only browser token from the local phone; all media and control requests go directly to that local endpoint. Browser Local Network Access permission and secure WebCodecs support are required. The hosted path parses the existing bounded H.264/fMP4 stream and paints VideoDecoder output to WebGL/canvas; it does not silently select JPEG or MediaSource. The existing local HTTP page retains its capability-based fallback behavior, but the native-JPEG experiment failed on the supported iPhone with callback status `-12780` and is not a validated fallback. No Tesla firmware, gear state or vehicle setting is changed.
+
+Keep overlay controls outside native geometry measurement: their visibility must not restart CarPlay. Only actual window resizing by the owning viewer, or explicit Fit display, applies new geometry. HTTPS2 network and timeline recovery replaces the browser video stream only; it must not stop the native session or audio. Preserve the three-recoveries-per-minute bound, ten-second timeline-catchup cooldown, stale-callback checks and generation-bound touch release ordering.
+
+The retained MediaSource path tracks random-access points from emitted MP4 fragments. It must not remove a range in the current GOP: MSE may extend removal through the next random-access point. Keep the one-tick safety margin and stale-session ownership checks. iOS’s wire-level `forceKeyFrame` restarts its screen bitstream, so continuous heartbeat-driven encoder resets are prohibited; only joining viewers and bounded long-GOP recovery request them. Canvas joins and recovery must remain bounded for the same reason.

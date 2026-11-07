@@ -6,7 +6,7 @@ import plistlib
 ROOT=Path(__file__).resolve().parents[2]
 class PackageTest(unittest.TestCase):
  def test_rootless_payload_ownership_paths_and_credentials(self):
-  path=ROOT/'dist/v3/com.cfluid.cardash.v3_3.0.0~beta.5+https.1_iphoneos-arm64.deb';data=path.read_bytes();self.assertEqual(data[:8],b'!<arch>\n');at=8;members={}
+  path=ROOT/'dist/v3/com.cfluid.cardash.v3_3.0.0~beta.5+https.2_iphoneos-arm64.deb';data=path.read_bytes();self.assertEqual(data[:8],b'!<arch>\n');at=8;members={}
   while at<len(data):
    header=data[at:at+60];n=int(header[48:58]);name=header[:16].decode().strip().rstrip('/');members[name]=data[at+60:at+60+n];at+=60+n+(n%2)
   with tarfile.open(fileobj=io.BytesIO(members['data.tar.xz'])) as tar:

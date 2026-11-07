@@ -2,7 +2,7 @@
 """Build an isolated V3 rootless DEB. This script never deploys or connects."""
 from pathlib import Path
 import subprocess,plistlib,hashlib,json,shutil,io,tarfile,os,importlib.util,re
-ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.5+https.1'
+ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.5+https.2'
 def run(args):subprocess.run([str(x) for x in args],check=True,cwd=ROOT)
 def writeplist(path,value):path.write_bytes(plistlib.dumps(value))
 def source_commit():

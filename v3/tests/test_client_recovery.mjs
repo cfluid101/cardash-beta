@@ -21,13 +21,13 @@ function fixture({muted=false,audioError='',session='first',autoOpen=true,active
  Object.defineProperty(video,'src',{set(value){this.url=value;if(autoOpen)queueMicrotask(()=>urls.get(value)?.emit('sourceopen'));},get(){return this.url;}});
  function makeCanvas(){const c={hidden:true,width:0,height:0,draws:0,setPointerCapture(){},cloneNode(){return makeCanvas();},replaceWith(n){elements.set('#canvas',n);},getContext(){return {drawImage(){c.draws++;}}}};canvases.push(c);return c;}
  if(canvasMode)elements.set('#canvas',makeCanvas());
- elements.set('video',video);for(const id of ['status','start','stop','sound','audioOutput','full','exitFull'])elements.set('#'+id,element());
+ elements.set('video',video);for(const id of ['status','start','stop','sound','audioOutput','full','exitFull','fitViewport'])elements.set('#'+id,element());
  class SourceBuffer extends Events{constructor(){super();this.updating=false;this.buffered={length:0};this.appended=[];}appendBuffer(data){this.appended.push(data);}remove(){}}
  class Media extends Events{constructor(){super();media.push(this);}addSourceBuffer(){this.buffer=new SourceBuffer();return this.buffer;}}
  const audioState={enabled:true,muted,contextState:'running',connectionState:'idle',error:audioError};
  const audioCalls={enable:0,stop:0,mute:0,connect:[]};
  const audio={get stats(){return {...audioState};},enable(){audioCalls.enable++;if(failEnable){audioState.error=failEnable;audioState.enabled=false;audioState.contextState='suspended';return Promise.reject(new Error(failEnable));}audioState.enabled=true;audioState.contextState='running';audioState.error='';return Promise.resolve(true);},stop(){audioCalls.stop++;audioState.connectionState='idle';},muteToggle(){audioCalls.mute++;audioState.muted=!audioState.muted;return audioState.muted;},connect(s){audioCalls.connect.push(s);if(!audioState.enabled){audioState.connectionState='awaiting-gesture';return Promise.resolve(false);}audioState.error=failAudio;audioState.connectionState=failAudio?'disconnected':'connected';return Promise.resolve(!failAudio);}};
- function stream(){const waiting=[],chunks=[];const s={cancelled:false,read(){if(chunks.length)return Promise.resolve(chunks.shift());return new Promise(r=>waiting.push(r));},push(value){const item={done:false,value};waiting.length?waiting.shift()(item):chunks.push(item);},cancel(){s.cancelled=true;return Promise.resolve();}};streams.push(s);return s;}
+ function stream(){const waiting=[],chunks=[];const s={cancelled:false,read(){if(chunks.length)return Promise.resolve(chunks.shift());return new Promise(r=>waiting.push(r));},push(value){const item={done:false,value};waiting.length?waiting.shift()(item):chunks.push(item);},finish(){const item={done:true};waiting.length?waiting.shift()(item):chunks.push(item);},cancel(){s.cancelled=true;return Promise.resolve();}};streams.push(s);return s;}
  async function fetch(url,options={}){
   fetchCalls.push({url,options});
   if(url==='/api/status')return {ok:true,json:async()=>({...service})};
@@ -272,12 +272,12 @@ test('native resize error survives the recovery status poll and clears on explic
  assert.doesNotMatch(f.elements.get('#status').textContent,/Native resize unavailable/);f.run('end()');
 });
 
-test('fullscreen changes during audio restart are reconciled after the transaction',async()=>{
+test('actual window resize during audio restart is reconciled after the transaction',async()=>{
  const f=fixture({audioOutput:'browser'});await settle();
- f.run(`let releaseStart,scheduled=[];setTimeout=(fn,ms)=>{if(ms===700)scheduled.push(fn);return scheduled.length;};clearTimeout=()=>{};
+ f.run(`let releaseStart,scheduled=[];setTimeout=(fn,ms)=>{if(ms===1200)scheduled.push(fn);return scheduled.length;};clearTimeout=()=>{};
  const oldFetch=fetch;fetch=(url,options)=>url==='/api/start'?new Promise(resolve=>{releaseStart=()=>resolve(oldFetch(url,options));}):oldFetch(url,options);`);
  f.elements.get('#audioOutput').value='phone';const pending=f.elements.get('#audioOutput').onchange();await settle();
- f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.run('fullscreen(true)');await f.run('scheduled.shift()()');
+ f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.events.get('resize')();await f.run('scheduled.shift()()');
  assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);
  f.run('releaseStart()');await pending;await settle();assert(f.run('scheduled.length')>0,'Transaction lost its pending viewport change');
  await f.run('scheduled.pop()()');await settle();const resize=f.requests.filter(r=>r.url==='/api/resize');
@@ -287,7 +287,7 @@ test('fullscreen changes during audio restart are reconciled after the transacti
 test('an older pending status poll cannot lose a second viewport change during resize',async()=>{
  const f=fixture({active:false,audioOutput:'phone'});await settle();await f.elements.get('#start').onclick();await settle();
  f.run(`let releaseStatus,releaseResize,heldStatus=false,heldResize=false,scheduled=[];
- setTimeout=(fn,ms)=>{if(ms===700)scheduled.push(fn);return scheduled.length;};clearTimeout=()=>{};
+ setTimeout=(fn,ms)=>{if(ms===1200)scheduled.push(fn);return scheduled.length;};clearTimeout=()=>{};
  const oldFetch=fetch;fetch=(url,options)=>{
   if(url==='/api/status'&&!heldStatus){heldStatus=true;return new Promise(resolve=>{releaseStatus=()=>resolve(oldFetch(url,options));});}
   if(url==='/api/resize'&&!heldResize){heldResize=true;return new Promise(resolve=>{releaseResize=()=>resolve(oldFetch(url,options));});}
@@ -295,7 +295,7 @@ test('an older pending status poll cannot lose a second viewport change during r
  };`);
  const oldPoll=f.run('poll()');await settle();
  f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:526});const resize=f.run('reconcileLayout()');await settle();
- f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.run('fullscreen(true)');await f.run('scheduled.shift()()');
+ f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.events.get('resize')();await f.run('scheduled.shift()()');
  f.run('releaseResize()');await resize;await settle();f.run('releaseStatus()');await oldPoll;await f.run('poll()');await settle();
  assert(f.run('scheduled.length')>0,'Adopting the replacement session lost its pending viewport change');
  await f.run('scheduled.pop()()');await settle();const calls=f.requests.filter(r=>r.url==='/api/resize');
@@ -410,4 +410,122 @@ test('hosted touch release on pagehide uses the authenticated request adapter',a
  const release=f.fetchCalls.filter(r=>r.url==='/api/touch').at(-1);
  assert.equal(release.options.keepalive,true);assert.equal(JSON.parse(release.options.body).down,false);
  assert.equal(f.adapterCalls.filter(p=>p==='/api/touch').length,2);f.run('end()');
+});
+
+
+test('showing and hiding controls never resizes or replaces a healthy native session',async()=>{
+ const f=fixture({active:false,audioOutput:'browser',canvasMode:'webcodecs'});await settle();await f.elements.get('#start').onclick();await settle();
+ const session=f.run('inputSession'),connections=f.run('nativeStats.videoConnections'),stops=f.audioCalls.stop;
+ f.run('let scheduledCount=0;setTimeout=(fn,ms)=>{if(ms===1200)scheduledCount++;return 1;}');
+ for(let i=0;i<20;i++){f.run('fullscreen(true)');f.run('fullscreen(false)');}
+ assert.equal(f.run('scheduledCount'),0);assert.equal(f.run('inputSession'),session);assert.equal(f.run('nativeStats.videoConnections'),connections);assert.equal(f.audioCalls.stop,stops);
+ assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);f.run('end()');
+});
+
+test('first native frame hides controls once without changing audio or the native session',async()=>{
+ const f=fixture({canvasMode:'webcodecs',audioOutput:'browser'});await settle();const stopCount=f.audioCalls.stop;
+ f.renderers[0].options.onFrame({decodedFrames:1,presentedFrames:1,timestamp:1000,renderer:'webgl'});
+ assert(f.classSet.has('full'));assert.equal(f.audioCalls.stop,stopCount);assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);
+ f.run('fullscreen(false)');f.renderers[0].options.onFrame({decodedFrames:2,presentedFrames:2,timestamp:2000,renderer:'webgl'});
+ assert(!f.classSet.has('full'),'User-opened controls must remain open');f.run('end()');
+});
+
+test('motion queue stays bounded and pointer-up follows the in-flight down immediately',async()=>{
+ const f=fixture({audioOutput:'phone'});await settle();let finish;
+ f.deferNextTouch(new Promise(resolve=>{finish=resolve;}));f.run("send(.1,.1,true,'down')");await settle();
+ for(let i=0;i<300;i++)f.run(`send(${i/300},.5,true,'move')`);
+ assert(f.run('nativeStats.inputQueued')<=2);assert.equal(f.touches.length,1);
+ f.run("send(.9,.6,false,'up')");finish({ok:true,json:async()=>({sequence:1})});await settle();await settle();
+ assert.equal(f.touches.length,2);assert.equal(f.touches[1].down,false);assert.equal(f.touches[1].x,.9);
+ assert(f.run('nativeStats.inputCoalesced')>=299);assert.equal(f.run('nativeStats.inputQueued'),0);f.run('end()');
+});
+
+test('a transient touch failure sends one release while video and audio stay connected',async()=>{
+ const f=fixture({audioOutput:'browser',canvasMode:'webcodecs'});await settle();const stops=f.audioCalls.stop,connections=f.run('nativeStats.videoConnections');
+ f.deferNextTouch(Promise.resolve({ok:false,json:async()=>({error:'Touch send failed'})}));f.run("send(.4,.5,true,'down')");await settle();await settle();
+ assert.equal(f.touches.length,2);assert.equal(f.touches[1].down,false);assert.equal(f.audioCalls.stop,stops);assert.equal(f.run('nativeStats.videoConnections'),connections);assert.equal(f.run('closed'),false);
+ assert.equal(f.run('nativeStats.inputErrors'),1);f.run('end()');
+});
+
+test('a pending status request cannot delay independent browser heartbeats',async()=>{
+ const f=fixture({audioOutput:'phone'});await settle();f.run(`let finishHeldStatus;const original=fetch;fetch=(url,options)=>url==='/api/status'?new Promise(resolve=>{finishHeldStatus=()=>resolve(original(url,options));}):original(url,options);`);
+ const before=f.requests.filter(r=>r.url==='/api/heartbeat').length,pending=f.run('poll()');await settle();
+ await f.run('heartbeat()');await settle();assert.equal(f.requests.filter(r=>r.url==='/api/heartbeat').length,before+1);
+ f.run('finishHeldStatus()');await pending;f.run('end()');
+});
+
+function recoveryClock(f){
+ f.run(`let clockNow=100,scheduled=[];performance.now=()=>clockNow;
+ setTimeout=(fn,ms)=>{const item={fn,ms,cancelled:false};scheduled.push(item);return item;};
+ clearTimeout=item=>{if(item&&typeof item==='object')item.cancelled=true;};`);
+ return {pending:()=>f.run('scheduled.filter(item=>!item.cancelled&&item===streamRecovery.timer)'),
+  fire(index=0,now=null){const item=this.pending()[index];assert(item,'Missing recovery timer');if(now!==null)f.run('clockNow='+now);item.cancelled=true;item.fn();return item;}};
+}
+
+test('hosted stream EOF reconnects only video and preserves native session, audio and open controls',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();
+ const clock=recoveryClock(f),stops=f.audioCalls.stop,commands=f.requests.filter(r=>['/api/start','/api/stop','/api/resize'].includes(r.url)).length;
+ f.renderers[0].options.onFrame({decodedFrames:1,presentedFrames:1,timestamp:1000000,renderer:'webgl'});f.run('fullscreen(false)');
+ f.streams[0].finish();await settle();assert.equal(clock.pending()[0].ms,500);assert.equal(f.run('inputSession'),'first');assert.equal(f.audioCalls.stop,stops);
+ await f.run('poll()');await f.run('poll()');await settle();assert.equal(f.renderers.length,1,'Polling bypassed the retry deadline');
+ clock.fire(0,600);await settle();assert.equal(f.renderers.length,2);assert.equal(f.streams[1].session,'first');assert.equal(f.audioCalls.stop,stops);
+ f.renderers[1].options.onFrame({decodedFrames:1,presentedFrames:1,timestamp:2000000,renderer:'webgl'});
+ assert(!f.classSet.has('full'),'Video-only recovery closed user-opened controls');assert.equal(f.run('nativeStats.videoRetries'),1);
+ assert.equal(f.requests.filter(r=>['/api/start','/api/stop','/api/resize'].includes(r.url)).length,commands);f.run('end()');
+});
+
+test('video replacement waits for a delayed down and its release before accepting a new gesture',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();
+ const clock=recoveryClock(f),stops=f.audioCalls.stop;let finishDown,finishUp;
+ f.deferNextTouch(new Promise(resolve=>{finishDown=resolve;}));f.run("send(.1,.2,true,'down');send(.3,.4,false,'up')");await settle();
+ f.streams[0].finish();await settle();clock.fire(0,600);await settle();
+ assert.equal(f.renderers.length,2);assert.equal(f.run("send(.8,.8,true,'down')"),false);assert.equal(f.touches.length,1);
+ f.deferNextTouch(new Promise(resolve=>{finishUp=resolve;}));finishDown({ok:true,json:async()=>({sequence:1})});await settle();await settle();
+ assert.equal(f.touches.length,2);assert.equal(f.touches[1].down,false);assert.equal(f.touches[1].session,'first');
+ assert.equal(f.run("send(.8,.8,true,'down')"),false,'Input raced the pending cleanup release');
+ finishUp({ok:true,json:async()=>({sequence:2})});await settle();await settle();
+ assert.equal(f.run("send(.8,.8,true,'down')"),true);await settle();assert.equal(f.touches.length,3);assert.equal(f.audioCalls.stop,stops);f.run('end()');
+});
+
+test('a cancelled recovery timer cannot clear or fire a replacement timer for the same generation',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ f.streams[0].finish();await settle();const old=clock.pending()[0];f.run('end()');await f.run('poll()');await settle();
+ f.streams[1].finish();await settle();const fresh=clock.pending()[0],connections=f.renderers.length;
+ old.fn();await settle();assert.equal(f.renderers.length,connections);assert.equal(f.run('streamRecovery.timer'),fresh);
+ clock.fire(0,600);await settle();assert.equal(f.renderers.length,connections+1);f.run('end()');
+});
+
+test('network retries use 0.5/1/2 seconds and count actual delayed execution toward the three-per-minute cap',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f),stops=f.audioCalls.stop;
+ for(const [index,delay,at] of [[0,500,90100],[1,1000,91100],[2,2000,93100]]){
+  f.streams[index].finish();await settle();assert.equal(clock.pending()[0].ms,delay);clock.fire(0,at);await settle();
+ }
+ f.streams[3].finish();await settle();assert.equal(clock.pending().length,0);assert.equal(f.renderers.length,4);
+ assert.equal(f.run('nativeStats.streamRecoveries'),3);assert.equal(f.run('nativeStats.videoRetries'),3);assert.equal(f.run('inputSession'),'first');assert.equal(f.audioCalls.stop,stops);
+ assert.match(f.elements.get('#status').textContent,/recovery limit.*Reconnect/i);await f.run('poll()');await settle();assert.equal(f.renderers.length,4);f.run('end()');
+});
+
+test('sustained timeline lag reconnects only the display with a ten-second catchup cooldown',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'browser'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f),stops=f.audioCalls.stop;
+ f.service={videoTimelineTicks:102*90000};f.renderers[0].options.onFrame({decodedFrames:12,presentedFrames:10,timestamp:100000000,renderer:'webgl'});
+ await f.run('poll()');await settle();assert.equal(clock.pending().length,0);assert.equal(f.run('nativeStats.streamLagMs'),2000);
+ await f.run('poll()');await settle();assert.equal(clock.pending()[0].ms,0);clock.fire(0,100);await settle();
+ f.service={videoTimelineTicks:106*90000};f.renderers[1].options.onFrame({decodedFrames:2,presentedFrames:2,timestamp:102000000,renderer:'webgl'});
+ await f.run('poll()');await settle();assert.equal(clock.pending()[0].ms,10000);assert.equal(f.run('nativeStats.videoRetries'),0);
+ clock.fire(0,10100);await settle();assert.equal(f.run('nativeStats.streamRecoveries'),2);assert.equal(f.audioCalls.stop,stops);assert.equal(f.run('inputSession'),'first');
+ assert.equal(f.requests.filter(r=>['/api/start','/api/stop','/api/resize'].includes(r.url)).length,0);f.run('end()');
+});
+
+test('intentional stop and late old-stream EOF never schedule display recovery',async()=>{
+ const f=fixture({hosted:true,canvasMode:'webcodecs',audioOutput:'phone'});await f.elements.get('#connect').onclick();await settle();const clock=recoveryClock(f);
+ const old=f.streams[0];await f.elements.get('#stop').onclick();old.finish();await settle();
+ assert.equal(clock.pending().length,0);assert.equal(f.run('nativeStats.streamRecoveries'),0);assert.equal(f.run('nativeStats.videoErrors'),0);
+});
+
+test('passive viewers adopt viewport ownership only through the explicit Fit display action',async()=>{
+ const f=fixture({audioOutput:'phone'});await settle();assert.equal(f.run('layoutSession'),null);
+ f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});
+ f.run('fullscreen(true);fullscreen(false)');f.events.get('resize')();await f.run('reconcileLayout()');await settle();
+ assert.equal(f.run('layoutSession'),null);assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);
+ await f.elements.get('#fitViewport').onclick();await settle();assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,1);assert.equal(f.run('layoutSession'),'resized');f.run('end()');
 });

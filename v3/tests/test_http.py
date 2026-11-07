@@ -64,8 +64,7 @@ class HttpTest(unittest.IsolatedAsyncioTestCase):
   with patch.object(asyncio,'TimeoutError',DeviceTimeoutError):
    await self.r.http(reader,writer)
   self.assertTrue(writer.closed);self.assertNotIn(writer,self.r.connections)
-  self.assertEqual(len(writer.writes),2)
+  self.assertEqual(len(writer.writes),1)
   self.assertTrue(writer.writes[0].startswith(b'HTTP/1.1 200'))
-  self.assertTrue(writer.writes[1].startswith(b'HTTP/1.1 400'))
   self.assertIn(b'200 OK',await self.request())
 if __name__=='__main__':unittest.main()

@@ -65,5 +65,5 @@
    if(generation===epoch)lastError=message;throw new Error(message);
   }
  }
- global.CarDashTransport=Object.freeze({connect,disconnect,fetch:fetchDevice,get diagnostics(){return {mode:hosted?'hosted':'local',endpoint,ready,lastError};}});
+ global.CarDashTransport=Object.freeze({connect,disconnect,fetch:fetchDevice,get diagnostics(){return {mode:hosted?'hosted':'local',endpoint,ready,lastError,browserInstance:hosted?identifier():''};}});
 })(window);

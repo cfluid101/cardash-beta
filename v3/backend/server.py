@@ -37,9 +37,25 @@ from browser_access import BrowserAccess,BrowserAccessError
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.5-https.1'
+VERSION='3.0.0-beta.5-https.2'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
+
+class HTTPBusyError(ValueError):
+    status=503
+
+class HTTPResponseWriter:
+    """Track one response boundary without changing the underlying transport."""
+    def __init__(self,writer):
+        self.writer=writer;self.started=False;self.phase='request_headers';self.bytes_written=0
+    def __getattr__(self,name):return getattr(self.writer,name)
+    def write(self,data):
+        # Mark before write: a failed write may already have sent partial bytes.
+        self.started=True;self.bytes_written=min(10**12,self.bytes_written+len(data))
+        return self.writer.write(data)
+
+def response_phase(writer,phase):
+    if isinstance(writer,HTTPResponseWriter):writer.phase=phase
 
 def create_image_decoder(config,width,height):
     from video_image import JPEGDecoder
@@ -78,7 +94,7 @@ class Receiver:
         except (OSError,ValueError):self.settings={}
         self.audio_output='browser' if self.settings.get('audioOutput')=='browser' else 'phone'
         self.audio_lease=AudioLease()
-        self.last_browser_metrics=-float('inf')
+        self.last_browser_metrics=-float('inf');self.browser_metrics_clients={}
         self.display=geometry();self.actual_source=None;self.display_verified=False
         self.network=TeslaNetwork(args.port)
         self.log('service_started',version=VERSION)
@@ -115,17 +131,30 @@ class Receiver:
             return self.status()
     def browser_metrics(self,value):
         now=time.monotonic()
-        if not isinstance(value,dict) or now-self.last_browser_metrics<12:return
+        if not isinstance(value,dict):return
+        instance=value.get('browserInstance')
+        if not isinstance(instance,str) or len(instance)!=32 or any(c not in '0123456789abcdef' for c in instance):instance=None
+        if instance:
+            for old,last in list(self.browser_metrics_clients.items()):
+                if now-last>600:del self.browser_metrics_clients[old]
+            if instance not in self.browser_metrics_clients and len(self.browser_metrics_clients)>=16:return
+            if now-self.browser_metrics_clients.get(instance,-float('inf'))<12:return
+        elif now-self.last_browser_metrics<12:return
         clean={}
-        limits={'width':16384,'height':16384,'decodedFrames':10**10,'droppedFrames':10**10,'currentTime':10**8,'readyState':4,'mediaError':4,'videoErrors':10**8,'presentedFrames':10**10,'frameAgeMs':10**9,'decoderQueueSize':10000}
+        limits={'width':16384,'height':16384,'decodedFrames':10**10,'droppedFrames':10**10,'currentTime':10**8,'readyState':4,'mediaError':4,'videoErrors':10**8,'presentedFrames':10**10,'frameAgeMs':10**9,'decoderQueueSize':10000,'heartbeatRttMs':60000,'statusRttMs':60000,'inputRttMs':60000,'streamLagMs':10**9}
         for key,limit in limits.items():
             n=value.get(key)
             if type(n) in (int,float) and math.isfinite(n) and 0<=n<=limit:clean[key]=n
         for key in ('paused','hidden','secureContext','webCodecs','webGL','webGPU'):
             if type(value.get(key)) is bool:clean[key]=value[key]
         if type(value.get('canvasDrawCalls')) is int and 0<=value['canvasDrawCalls']<=10**10:clean['canvasDrawCalls']=value['canvasDrawCalls']
+        for key,limit in {'inputQueued':5,'inputCoalesced':10**10,'inputErrors':10**10,'heartbeatErrors':10**10,'videoRetries':10**10,'streamRecoveries':10**10}.items():
+            if type(value.get(key)) is int and 0<=value[key]<=limit:clean[key]=value[key]
         if value.get('renderer') in ('mse','webcodecs-webgl','webcodecs-2d','jpeg-canvas','unavailable'):clean['renderer']=value['renderer']
-        if clean:self.last_browser_metrics=now;self.log('browser_metrics',**clean)
+        if clean:
+            if instance:clean['browserInstance']=instance;self.browser_metrics_clients[instance]=now
+            else:self.last_browser_metrics=now
+            self.log('browser_metrics',**clean)
     async def prepare(self):
         if self.ready():return
         need(not self.provisioning,'Identity preparation is already running')
@@ -202,7 +231,7 @@ class Receiver:
             raise
         self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False
         self.native_watch=asyncio.create_task(self.watch_helper(self.helper,self.generation))
-        self.log('native_start',pid=self.helper.pid,audioOutput=self.audio_output,requestedViewport=self.display.viewport,display={'width':self.display.width,'height':self.display.height,'widthPhysical':260,'heightPhysical':self.display.physical_height});return self.status()
+        self.log('native_start',pid=self.helper.pid,sessionTag=self.session_tag(),audioOutput=self.audio_output,requestedViewport=self.display.viewport,display={'width':self.display.width,'height':self.display.height,'widthPhysical':260,'heightPhysical':self.display.physical_height});return self.status()
     async def watch_helper(self,child,generation):
         try:
             while True:
@@ -225,10 +254,15 @@ class Receiver:
         except asyncio.CancelledError:pass
     async def stop(self,reason='user_stop',generation=None):
         async with self.lock:return await self._stop_locked(reason,generation)
+    def session_tag(self):
+        return hashlib.sha256(self.generation.encode()).hexdigest()[:12] if self.generation else None
     async def _stop_locked(self,reason='user_stop',generation=None):
         # Disconnect callbacks can wait behind another Stop/Start. Their
         # captured session must still own the receiver after that wait.
         if generation is not None and generation!=self.generation:return False
+        now=time.monotonic();tag=self.session_tag()
+        lifetime=min(10**9,max(0,round((now-self.started)*1000))) if self.active else 0
+        heartbeat_age=min(10**9,max(0,round((now-self.last_heartbeat)*1000))) if self.active else 0
         try:self.audio_lease.clear()
         except OSError as e:self.log('audio_lease_clear_failed',error=str(e))
         child=self.helper;self.helper=None;self.active=False;self.generation=None
@@ -250,7 +284,7 @@ class Receiver:
             except asyncio.QueueFull:pass
         self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
         if self.capture:self.capture.close();self.capture=None
-        self.log('native_stop',reason=reason,frames=self.frames)
+        self.log('native_stop',reason=reason,frames=self.frames,sessionTag=tag,lifetimeMs=lifetime,heartbeatAgeMs=heartbeat_age)
         return True
     async def resize(self,value):
         # Validate before ending anything, then re-check generation under the
@@ -332,8 +366,10 @@ class Receiver:
         need(self.active and generation==self.generation,'Stale native session');need(len(self.audio_viewers)<2,'Two audio viewers are already connected')
         queue=asyncio.Queue(maxsize=64);state={'bytes':0,'closed':False,'reset_lanes':{},'next_record':0,'dropped_packets':0,'dropped_bytes':0};self.audio_viewers[queue]=state
         try:
+            response_phase(writer,'audio_headers')
             writer.write(self.stream_headers('application/octet-stream',response_headers));await asyncio.wait_for(writer.drain(),2)
             while self.active and generation==self.generation and not state['closed'] and not (reader and reader.at_eof()):
+                response_phase(writer,'audio_wait')
                 try:packet=await asyncio.wait_for(queue.get(),2)
                 except asyncio.TimeoutError:
                     if writer.is_closing() or (reader and reader.at_eof()):break
@@ -346,7 +382,7 @@ class Receiver:
                 lane=packet[9]
                 if lane in state['reset_lanes'] and record>state['reset_lanes'][lane]:
                     packet=packet[:11]+bytes([packet[11]|1])+packet[12:];del state['reset_lanes'][lane]
-                writer.write(packet);await asyncio.wait_for(writer.drain(),2)
+                response_phase(writer,'audio_drain');writer.write(packet);await asyncio.wait_for(writer.drain(),2)
         finally:self.audio_viewers.pop(queue,None)
     async def control_client(self,reader,writer):
         if not self.active or self.control:writer.close();return
@@ -611,7 +647,7 @@ class Receiver:
         finally:writer.close()
     async def http(self,reader,writer):
         if len(self.connections)>=16:writer.close();return
-        self.connections.add(writer);cors={}
+        raw_writer=writer;self.connections.add(raw_writer);writer=HTTPResponseWriter(raw_writer);cors={};began=time.monotonic()
         try:
             peer=writer.get_extra_info('peername');need(peer and allowed_peer(peer[0],self.network),'Local network only')
             raw=await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'),5);need(len(raw)<=16384,'Header limit')
@@ -633,7 +669,9 @@ class Receiver:
             else:need(headers.get('sec-fetch-site','same-origin') in ('same-origin','none'),'Cross-site request rejected')
             need('transfer-encoding' not in headers,'Transfer encoding rejected')
             length=int(headers.get('content-length','0'));need(0<=length<=4096,'Request limit')
+            writer.phase='request_body'
             body=await asyncio.wait_for(reader.readexactly(length),5) if length else b''
+            writer.phase='dispatch'
             if remote and method=='OPTIONS':
                 need(not body,'Preflight request body rejected')
                 extra=self.browser_access.preflight(origin,path,headers.get('access-control-request-method',''),headers.get('access-control-request-headers',''))
@@ -660,10 +698,14 @@ class Receiver:
                 value=json.loads(body or b'{}');value['action']=path[5:];result=await self.action(value);await self.reply(writer,200,json.dumps(result).encode(),extra=cors)
             else:await self.reply(writer,404,b'Not found','text/plain')
         except Exception as e:
-            self.log('browser_request_rejected',error=str(e))
-            try:await self.reply(writer,e.status if isinstance(e,BrowserAccessError) else 400,json.dumps({'error':str(e)}).encode(),extra=cors)
-            except (ConnectionError,OSError,asyncio.TimeoutError):pass
-        finally:self.connections.discard(writer);writer.close()
+            error=str(e)[:256]
+            self.log('browser_response_failed' if writer.started else 'browser_request_rejected',error=error,errorType=type(e).__name__[:64],phase=writer.phase,responseStarted=writer.started,responseBytes=writer.bytes_written,elapsedMs=min(10**9,max(0,round((time.monotonic()-began)*1000))))
+            # Once headers/body were sent, another HTTP response would become
+            # corrupt media (or trailing JSON) inside the existing response.
+            if not writer.started:
+                try:await self.reply(writer,e.status if isinstance(e,(BrowserAccessError,HTTPBusyError)) else 400,json.dumps({'error':error}).encode(),extra=cors)
+                except (ConnectionError,OSError,asyncio.TimeoutError):pass
+        finally:self.connections.discard(raw_writer);writer.close()
     @staticmethod
     def stream_headers(kind,extra=None):
         values={'Content-Type':kind,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close',**(extra or {})}
@@ -671,6 +713,7 @@ class Receiver:
     async def reply(self,writer,status,data,kind='application/json',extra=None):
         values={'Content-Type':kind,'Content-Length':str(len(data)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close',**(extra or {})}
         header=f'HTTP/1.1 {status} '+({200:'OK',204:'No Content'}.get(status,'Error'))+'\r\n'+''.join(k+': '+v+'\r\n' for k,v in values.items())+'\r\n'
+        response_phase(writer,'image_reply' if kind=='image/jpeg' else 'json_reply' if kind=='application/json' else 'asset_reply')
         writer.write(header.encode()+data);await asyncio.wait_for(writer.drain(),5)
     @staticmethod
     def clean_image_stats(value):
@@ -779,22 +822,27 @@ class Receiver:
             raise
         finally:self.image_waiters-=1
     async def viewer(self,writer,reader=None,response_headers=None):
-        need(self.active and self.video and self.muxer,'Native video is not ready');need(len(self.viewers)<2,'Two viewers are already connected')
+        need(self.active and self.video and self.muxer,'Native video is not ready')
+        if len(self.viewers)>=2:raise HTTPBusyError('Two viewers are already connected')
         q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
         try:
+            response_phase(writer,'video_headers')
             writer.write(self.stream_headers('video/mp4',response_headers));await asyncio.wait_for(writer.drain(),3)
             if not self.active:return
+            response_phase(writer,'video_keyframe')
             await self.request_keyframe(state['session'],'viewer_join')
             while self.active and state['session']==self.generation and not state['closed'] and not (reader and reader.at_eof()):
+                response_phase(writer,'video_wait')
                 try:fragment=await asyncio.wait_for(q.get(),4)
                 except asyncio.TimeoutError:
                     if writer.is_closing() or (reader and reader.at_eof()):break
                     continue
                 if fragment is None or not self.active or state['session']!=self.generation or (reader and reader.at_eof()):break
-                state['bytes']-=len(fragment);writer.write(fragment);await asyncio.wait_for(writer.drain(),3)
+                state['bytes']-=len(fragment);response_phase(writer,'video_drain');writer.write(fragment);await asyncio.wait_for(writer.drain(),3)
         finally:
             self.viewers.pop(q,None)
-            if self.last_pointer and state['session']==self.generation:
+            # A retiring connection must not release a replacement viewer's contact.
+            if self.last_pointer and state['session']==self.generation and not any(v['session']==self.generation and not v.get('closed',False) for v in self.viewers.values()):
                 try:await self.touch(self.last_pointer)
                 except Exception:pass
     async def network_monitor(self):

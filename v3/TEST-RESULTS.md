@@ -1,6 +1,25 @@
-# CarDash V3 beta 5 — validation
+# CarDash V3 beta 5 HTTPS2 — validation
 
-## Beta 5 candidate — release held for the navigation issue
+## HTTPS2 candidate — local and browser validation
+
+Package: `3.0.0~beta.5+https.2`. Tester page: [HTTPS2](https://cfluid101.github.io/cardash-beta/option1/?v=https2), superseding HTTPS1. The hosted site delivers static assets; the browser receives H.264 and optional audio directly from the local iPhone. No cloud media relay or Tesla firmware/gear-state change is included.
+
+The prior car-trial logs contain 24 native starts, 20 viewport-change stops and 11 zero-frame sessions in the reviewed window. Steady samples show roughly 27–30 canvas draws per second and an empty decoder queue, but one approximate media-timeline deficit reached 4.246 seconds. The records cannot uniquely attribute every row to the Tesla or measure physical display latency. They support fixing restart churn and queued work before changing the decoder.
+
+HTTPS2 makes the display a stable full-viewport surface with scrollable overlay controls. Showing/hiding controls no longer changes native geometry or audio. Only the starting browser, or a viewer that explicitly selects Fit display, owns native sizing. Genuine window changes remain generation-checked native restarts after a 1.2-second quiet period. Touch input is bounded and coalesces pending moves while preserving release; a detached stream waits for its in-flight touch and release before accepting a replacement gesture. Independent two-second heartbeat scheduling is not blocked by an eight-second status request.
+
+Display-only retry uses 0.5/1/2-second network delays, a shared maximum of three actual recoveries in 60 seconds, and a ten-second cooldown for timeline catchup. It preserves the native session and audio. Tests cover late callbacks, delayed timers, release ordering, terminal decoder errors, intentional stop and retry exhaustion. Browser counters distinguish decoding and canvas drawing; neither proves vehicle presentation.
+
+Completed checks:
+
+- **81 JavaScript tests passed**, including 50 client lifecycle/input/overlay/recovery tests and the audio, transport and canvas suites. Syntax and whitespace checks passed. The backend reviewer independently reran the 50 client tests.
+- A real headless Chrome fixture verified endpoint text entry, Connect, Start and show/hide controls at **773×250, 773×360, 773×442, 773×526, 773×601 and 1256×707**. Pointer targets were checked with `elementFromPoint` after scrolling. Repeated overlay toggles preserved the exact display rectangle and sent no resize request. The fixture used stubbed transport/decoding and did not contact the phone.
+- With a deliberately stalled status request, that browser fixture still sent five independent heartbeats; its maximum measured interval was 2000.2 ms. Pointer down/up completed under a synthetic 250 ms input delay with observed queue depth no greater than two. The move-coalescing bound is established by the focused unit regression, not that pointer fixture.
+- A passive viewer did not resize another browser's session after a viewport change. Explicit Fit sent exactly one resize to 773×526. Independent backend response-boundary and bounded-metric checks also passed.
+
+**HTTPS2 physical-device, public-hosted-page and Tesla acceptance results are pending in this section.** These offline/browser checks do not establish real hotspot latency, Bluetooth/audio continuity, Drive presentation, long-duration thermal behavior or complete recovery from actual network loss. The local native-JPEG experiment remains blocked by iOS decoder callback error `-12780`; its host passes are not device acceptance. Hosted mode requires WebCodecs and never silently selects that fallback.
+
+## Historical beta 5 MSE candidate — not HTTPS2 acceptance
 
 Beta 5 replaces independent-axis stretching with a native display request based on the browser viewport's aspect ratio. The source is capped at 1,280 pixels wide, 960 pixels high and 921,600 total pixels, and remains at least as wide as tall in narrow previews. The browser preserves source proportions; iOS selects the app layout for the negotiated display. A four-column, three-row grid is not guaranteed. Viewport changes use a generation-checked native-session restart with the existing audio choice retained.
 
@@ -12,7 +31,7 @@ On the supported physical iPhone, a fresh 773×601 browser session negotiated an
 
 A 92.06-second continuously locked trial selected Waze, YouTube Music and Home through native input, then restarted at the controls-visible resolution and returned to full-screen resolution while still locked. Both screen-off and awake Lock Screen states were observed. Native display verification and browser playback recovered after both deliberate resizes with no browser video errors. Reviewed screenshots verified the selected interfaces. Playback remained paused; this was not a new music-quality or Bluetooth test.
 
-All 35 installed candidate payload hashes matched the package manifest. Preservation checks matched 585 original project entries, the original DEB, 203 outer-project files and 23 original installed files/preferences. The candidate is not published: the user’s report that the whole navigation display freezes in Tesla Drive remains a release blocker. The successful desktop/phone tests do not resolve or validate that vehicle behavior. The historical results below retain their original scope and are not beta 5 acceptance evidence.
+All 35 installed candidate payload hashes matched the package manifest. Preservation checks matched 585 original project entries, the original DEB, 203 outer-project files and 23 original installed files/preferences. At that historical checkpoint the candidate was not published: the user’s report that the whole navigation display froze in Tesla Drive remained a release blocker. The successful desktop/phone tests do not resolve or validate that vehicle behavior. The historical results below retain their original scope and are not beta 5 acceptance evidence.
 
 ## Historical beta 4 validation
 
@@ -100,7 +119,7 @@ Audio overflow discards oldest records within a 64-record/256 KiB bound, preserv
 
 ## Remaining vehicle and compatibility checks
 
-Beta 5's native viewport sizing and Tesla video/input behavior, Personal Hotspot interruption/recovery, navigation voice prompts mixed with music, steering-wheel controls, and long-duration thermal/battery behavior require vehicle testing. USB-free startup and streaming have been exercised over home Wi-Fi, and the user separately reported successful Tesla Bluetooth audio after beta 4. Those results do not establish the remaining checks. Beta 5 adapts native source dimensions within a 1,280-pixel width, 960-pixel height and 921,600-pixel total budget; iOS determines the resulting app grid. The earlier fixed-resolution and stretched-display trials above remain historical beta 4 evidence. Microphone/Siri/call input is unsupported. Other phone models/iOS builds are unverified and rejected by the installer.
+HTTPS2 Tesla video/input responsiveness, Personal Hotspot interruption/recovery, navigation voice prompts mixed with music, steering-wheel controls, and long-duration thermal/battery behavior require vehicle testing. USB-free startup and streaming have been exercised over home Wi-Fi, and the user separately reported successful Tesla Bluetooth audio after beta 4. Those results do not establish the remaining checks. Beta 5 adapts native source dimensions within a 1,280-pixel width, 960-pixel height and 921,600-pixel total budget; iOS determines the resulting app grid. The earlier fixed-resolution and stretched-display trials above remain historical beta 4 evidence. Microphone/Siri/call input is unsupported. Other phone models/iOS builds are unverified and rejected by the installer.
 
 CarBridge and Immortalizer were preexisting third-party packages. Full-app interfaces shown during these trials use CarBridge; this release does not replace or bundle it. Results without CarBridge must not be inferred. The historical beta 2 clean locked trial ran without Immortalizer injection; its files were restored afterward. Do not infer that the beta 4 trial repeated that isolation. YouTube Music's installed old version shows an unsupported-version message, while its existing Now Playing playback remains usable on this device.
 

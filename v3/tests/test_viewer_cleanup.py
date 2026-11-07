@@ -127,6 +127,25 @@ class ViewerCleanupTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(old.empty())
         self.assertEqual(new.get_nowait(), b'new-frame')
 
+    async def test_retiring_viewer_does_not_release_another_current_viewers_contact(self):
+        r=self.receiver;r.active=True;r.touch=AsyncMock()
+        r.last_pointer={'session':r.generation,'x':.8,'y':.4,'down':False}
+        other=asyncio.Queue();r.viewers[other]={'session':r.generation,'closed':False}
+        writer=types.SimpleNamespace(write=Mock(),drain=AsyncMock(),is_closing=lambda:False)
+        await r.viewer(writer,types.SimpleNamespace(at_eof=lambda:True))
+        r.touch.assert_not_awaited();self.assertIn(other,r.viewers)
+        r.viewers.clear()
+        await r.viewer(writer,types.SimpleNamespace(at_eof=lambda:True))
+        r.touch.assert_awaited_once_with(r.last_pointer)
+
+    async def test_retired_generation_viewer_does_not_prevent_final_contact_cleanup(self):
+        r=self.receiver;r.active=True;r.touch=AsyncMock()
+        r.last_pointer={'session':r.generation,'x':.5,'y':.5,'down':False}
+        r.viewers[asyncio.Queue()]={'session':'retired','closed':False}
+        writer=types.SimpleNamespace(write=Mock(),drain=AsyncMock(),is_closing=lambda:False)
+        await r.viewer(writer,types.SimpleNamespace(at_eof=lambda:True))
+        r.touch.assert_awaited_once_with(r.last_pointer)
+
 
     async def test_quiet_http_disconnect_releases_audio_and_video_slots(self):
         r = self.receiver

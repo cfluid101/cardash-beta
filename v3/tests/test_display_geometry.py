@@ -59,7 +59,20 @@ class DisplayGeometryTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.r.generation,s['session'])
         same=await self.r.action({'action':'resize','session':s['session'],'viewport':{'width':1280,'height':720}})
         self.assertEqual(same['session'],s['session'])
+        equivalent=await self.r.action({'action':'resize','session':s['session'],'viewport':{'width':1600,'height':900}})
+        self.assertEqual(equivalent['session'],s['session'])
+        self.child.terminate.assert_not_called();self.r.audio_lease.clear.assert_not_called()
         self.assertEqual(self.r.receiver_info(),plistlib.loads((ROOT/'receiver-info.plist').read_bytes()))
+
+    async def test_stop_diagnostics_correlate_session_without_logging_credentials(self):
+        status=await self.r.action({'action':'start'})
+        self.r.started=100;self.r.last_heartbeat=107
+        with patch('server.time.monotonic',return_value=115):await self.r.stop('browser_timeout')
+        rows=[json.loads(line) for line in Path(self.tmp.name,'diagnostic.ndjson').read_text().splitlines()]
+        start=next(r for r in rows if r['event']=='native_start');stop=next(r for r in rows if r['event']=='native_stop')
+        self.assertEqual(stop['sessionTag'],start['sessionTag']);self.assertEqual(len(stop['sessionTag']),12)
+        self.assertEqual(stop['lifetimeMs'],15000);self.assertEqual(stop['heartbeatAgeMs'],8000)
+        self.assertNotIn(status['session'],json.dumps(rows))
 
     async def test_resize_holds_lifecycle_lock_and_rejects_second_old_request(self):
         first=await self.r.action({'action':'start'});entered=asyncio.Event();release=asyncio.Event()
