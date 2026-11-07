@@ -1,6 +1,6 @@
 # CarDash V3 beta 5 HTTPS2 — validation
 
-## HTTPS2 candidate — local and browser validation
+## HTTPS2 candidate — validation
 
 Package: `3.0.0~beta.5+https.2`. Tester page: [HTTPS2](https://cfluid101.github.io/cardash-beta/option1/?v=https2), superseding HTTPS1. The hosted site delivers static assets; the browser receives H.264 and optional audio directly from the local iPhone. No cloud media relay or Tesla firmware/gear-state change is included.
 
@@ -12,12 +12,26 @@ Display-only retry uses 0.5/1/2-second network delays, a shared maximum of three
 
 Completed checks:
 
-- **81 JavaScript tests passed**, including 50 client lifecycle/input/overlay/recovery tests and the audio, transport and canvas suites. Syntax and whitespace checks passed. The backend reviewer independently reran the 50 client tests.
+- **222 automated checks passed: 136 backend tests, one package audit and 85 JavaScript tests.** The JavaScript suite includes 50 client lifecycle/input/overlay/recovery tests plus the audio, transport and canvas suites. Syntax and whitespace checks passed. The backend reviewer independently reran the 50 client tests.
 - A real headless Chrome fixture verified endpoint text entry, Connect, Start and show/hide controls at **773×250, 773×360, 773×442, 773×526, 773×601 and 1256×707**. Pointer targets were checked with `elementFromPoint` after scrolling. Repeated overlay toggles preserved the exact display rectangle and sent no resize request. The fixture used stubbed transport/decoding and did not contact the phone.
 - With a deliberately stalled status request, that browser fixture still sent five independent heartbeats; its maximum measured interval was 2000.2 ms. Pointer down/up completed under a synthetic 250 ms input delay with observed queue depth no greater than two. The move-coalescing bound is established by the focused unit regression, not that pointer fixture.
 - A passive viewer did not resize another browser's session after a viewport change. Explicit Fit sent exactly one resize to 773×526. Independent backend response-boundary and bounded-metric checks also passed.
 
-**HTTPS2 physical-device, public-hosted-page and Tesla acceptance results are pending in this section.** These offline/browser checks do not establish real hotspot latency, Bluetooth/audio continuity, Drive presentation, long-duration thermal behavior or complete recovery from actual network loss. The local native-JPEG experiment remains blocked by iOS decoder callback error `-12780`; its host passes are not device acceptance. Hosted mode requires WebCodecs and never silently selects that fallback.
+### HTTPS2 connected-phone checks
+
+The following checks used the supported physical iPhone and Mac Chrome loading the public HTTPS2 page. Media/control traffic went directly to **169.254.38.140:8890 over the USB network interface**. The Mac could not reach the phone's Wi-Fi address during these trials. These are not Tesla, Personal Hotspot or locked-phone acceptance tests. The four published JavaScript assets and the hosted index matched their expected hashes.
+
+- **Twenty overlay show/hide cycles** retained the same native session, 1280×800 display rectangle and single video connection. Presented frames increased from 139 to 255, with no video error or recovery. Phone audio mode remained selected; no browser audio connection opened.
+- Under the same **120 ms synthetic request latency**, the old 1,278 ms drag produced a 2,676 ms native-touch span with 22 events. HTTPS2's 1,231 ms drag produced a 1,302 ms native-touch span with 11 events. Both ended with a release. This demonstrates less queued input in that controlled comparison; it is not an end-to-end Tesla latency measurement.
+- Forcing the active video reader to reach EOF caused **one video-only reconnect**. The native generation and phone audio selection were retained; the replacement displayed 281 frames by the checkpoint with no video error. A separate four-second injected renderer-push delay triggered **one timeline catchup**, retained the native generation and displayed 314 replacement frames by its checkpoint with no video error. Neither test restarted the native session.
+- A two-second CDP request-offline interval did **not** break the already-open video stream. Heartbeats recovered and the native generation remained active, but this trial does not establish reconnect behavior after actual link loss. The forced-EOF trial above is the direct recovery-path check.
+- A persistent browser viewport change from 756×469 to **773×601** produced exactly **one** recorded `viewport_changed` stop/start. The new native source was **1088×846**, verified against the stream, and resumed drawing with no video error. This deliberate native restart remains expected for genuine geometry changes.
+- Native controls selected YouTube Music pause, Waze and Home. Reviewed screenshots confirmed those interfaces, and the final counter recorded six successful input messages with no input error. This does not constitute a new locked-switching, Bluetooth-quality or audible-playback trial.
+- A **64.555-second Mac-browser stress interval**, using 4× CPU throttling and 120 ms synthetic network latency, retained one native generation and averaged **29.93 native frames and canvas draws per second**. It added no video error, heartbeat error or recovery; sampled media-timeline deficit was zero. This is a short synthetic workload result, not a Tesla performance or thermal-endurance guarantee.
+
+**Actual Tesla responsiveness, hotspot interruption/recovery, Bluetooth quality and steering-wheel controls, locked-phone regression, and long-duration thermal/battery behavior remain pending for HTTPS2.** A secure-context capability check, accepted native input, fresh decoder output or canvas drawing alone does not establish vehicle presentation. The local native-JPEG experiment remains blocked by iOS decoder callback error `-12780`; its host passes are not device acceptance. Hosted mode requires WebCodecs and never silently selects that fallback.
+
+The final transport regression also clears a recovered network warning after a successful current authorized request, while retaining newer failures and expired authorization. The pre-HTTPS2 rollback package was actually reinstalled and all 40 payload hashes matched its saved manifest; the original 23 installed files/preferences and three V3 settings/identity files remained unchanged. Final package verification and the short compact-window recheck are recorded separately in the release evidence.
 
 ## Historical beta 5 MSE candidate — not HTTPS2 acceptance
 

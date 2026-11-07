@@ -3,7 +3,7 @@
  'use strict';
  const location=global.location,hosted=location?.protocol==='https:'&&location.origin==='https://cfluid101.github.io'&&location.pathname.startsWith('/cardash-beta/option1/');
  const DEFAULT='http://100.99.10.2:8890/',NETWORK_ERROR='Cannot reach the iPhone. Check its hotspot and address, then allow Local Network Access for this site. This browser may not support HTTPS-to-local HTTP connections.';
- let endpoint=hosted?DEFAULT:location?.origin+'/',addressSpace='local',token='',ready=!hosted,lastError='',epoch=0,bootstrap=null,clientId=null;
+ let endpoint=hosted?DEFAULT:location?.origin+'/',addressSpace='local',token='',ready=!hosted,lastError='',errorRevision=0,epoch=0,bootstrap=null,clientId=null;
  function localEndpoint(text){
   let url;try{url=new URL(text);}catch(_){throw new Error('Enter a local HTTP endpoint, for example '+DEFAULT);}
   if(url.protocol!=='http:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw new Error('Use a local HTTP address without credentials, path, query or fragment.');
@@ -51,18 +51,19 @@
   if(!hosted)return global.fetch(path,base);
   if(!/^\/(?:api\/[a-z_]+|video|audio|image)$/.test(path))throw new Error('Invalid local request path.');
   if(!ready||!token)throw new Error('Press Connect to authorize this browser with the iPhone.');
-  const generation=epoch;
+  const generation=epoch,requestErrorRevision=errorRevision;
   try{
    const response=await global.fetch(new URL(path,endpoint).href,options(base,token));
    if(response.status===401){
     if(generation===epoch){token='';ready=false;lastError='iPhone authorization expired. Press Connect to reconnect.';}
     throw new Error('iPhone authorization expired. Press Connect to reconnect.');
    }
+   if(response.ok&&generation===epoch&&ready&&token&&requestErrorRevision===errorRevision)lastError='';
    return response;
   }catch(error){
    if(error?.name==='AbortError')throw error;
    const message=error instanceof TypeError||error?.name==='TypeError'?NETWORK_ERROR:error.message||'Local request failed.';
-   if(generation===epoch)lastError=message;throw new Error(message);
+   if(generation===epoch){lastError=message;errorRevision++;}throw new Error(message);
   }
  }
  global.CarDashTransport=Object.freeze({connect,disconnect,fetch:fetchDevice,get diagnostics(){return {mode:hosted?'hosted':'local',endpoint,ready,lastError,browserInstance:hosted?identifier():''};}});

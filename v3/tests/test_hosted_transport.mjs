@@ -57,6 +57,48 @@ test('expired authorization clears the token and never replays a command',async(
  assert.equal(f.api.diagnostics.ready,false);assert.equal(f.calls.length,2);
  await assert.rejects(()=>f.api.fetch('/api/start',{method:'POST'}),/Connect/);assert.equal(f.calls.length,2);
 });
+test('successful authorized status and heartbeat clear a recovered network warning',async()=>{
+ const f=fixture();await f.api.connect();
+ for(const path of ['/api/status','/api/heartbeat']){
+  f.responder=async()=>{throw new TypeError('Failed to fetch');};
+  await assert.rejects(()=>f.api.fetch(path),/Cannot reach/);assert.match(f.api.diagnostics.lastError,/Cannot reach/);
+  f.responder=async()=>({ok:false,status:503});await f.api.fetch(path);
+  assert.match(f.api.diagnostics.lastError,/Cannot reach/,'An unsuccessful response must retain the warning');
+  f.responder=async()=>({ok:true,status:200});await f.api.fetch(path);
+  assert.equal(f.api.diagnostics.lastError,'');assert.equal(f.api.diagnostics.ready,true);
+ }
+});
+test('delayed success cannot clear a newer network warning in the same authorization generation',async()=>{
+ const f=fixture();await f.api.connect();let finish;
+ f.responder=()=>new Promise(resolve=>{finish=resolve;});const old=f.api.fetch('/api/status');
+ f.responder=async()=>{throw new TypeError('Failed to fetch');};
+ await assert.rejects(()=>f.api.fetch('/api/heartbeat'),/Cannot reach/);
+ finish({ok:true,status:200});await old;
+ assert.match(f.api.diagnostics.lastError,/Cannot reach/);assert.equal(f.api.diagnostics.ready,true);
+ f.responder=async()=>({ok:true,status:200});await f.api.fetch('/api/status');assert.equal(f.api.diagnostics.lastError,'');
+});
+test('delayed success cannot clear expiration or restore authorization',async()=>{
+ const f=fixture();await f.api.connect();let finish;
+ f.responder=()=>new Promise(resolve=>{finish=resolve;});const old=f.api.fetch('/api/status');
+ f.responder=async()=>({ok:false,status:401});await assert.rejects(()=>f.api.fetch('/api/heartbeat'),/expired/);
+ finish({ok:true,status:200});await old;
+ assert.match(f.api.diagnostics.lastError,/expired/);assert.equal(f.api.diagnostics.ready,false);
+ const count=f.calls.length;await assert.rejects(()=>f.api.fetch('/api/status'),/Connect/);assert.equal(f.calls.length,count);
+});
+test('delayed old-generation success preserves both failed bootstrap and newer connected warnings',async()=>{
+ for(const bootstrapFailure of [true,false]){
+  const f=fixture();await f.api.connect();let finish;
+  f.responder=()=>new Promise(resolve=>{finish=resolve;});const old=f.api.fetch('/api/status');
+  if(bootstrapFailure){
+   f.responder=async()=>{throw new TypeError('Failed to fetch');};await assert.rejects(()=>f.api.connect(),/Cannot reach/);
+  }else{
+   f.responder=async()=>({ok:true,status:200,json:async()=>({version:1,token:'b'.repeat(64),expiresIn:1800})});await f.api.connect();
+   f.responder=async()=>{throw new TypeError('Failed to fetch');};await assert.rejects(()=>f.api.fetch('/api/heartbeat'),/Cannot reach/);
+  }
+  finish({ok:true,status:200});await old;
+  assert.match(f.api.diagnostics.lastError,/Cannot reach/);assert.equal(f.api.diagnostics.ready,!bootstrapFailure);
+ }
+});
 test('bootstrap rejects invalid credentials and preserves actionable network errors',async()=>{
  const f=fixture();f.responder=async()=>({ok:true,status:200,json:async()=>({version:1,token:'bad',expiresIn:1800})});
  await assert.rejects(()=>f.api.connect('http://100.99.10.2:8890/'),/bootstrap|authorization/i);assert(!f.api.diagnostics.ready);
