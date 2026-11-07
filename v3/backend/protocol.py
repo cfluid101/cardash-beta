@@ -139,12 +139,13 @@ class ControlCipher:
 class ScreenReceiver:
     def __init__(self,key,on_config,on_frame):
         self.key=key;self.on_config=on_config;self.on_frame=on_frame;self.counter=0;self.buffer=bytearray();self.configured=False
-    def push(self,data):
+    def push(self,data,max_packets=None):
         need(len(self.buffer)+len(data)<=8388736,'screen buffer limit');self.buffer+=data
-        while len(self.buffer)>=128:
+        processed=0
+        while len(self.buffer)>=128 and (max_packets is None or processed<max_packets):
             header=bytes(self.buffer[:128]);n=struct.unpack_from('<I',header)[0];op=header[4]
             need(n<=8388608 and op in (0,1,2),'screen header')
-            if len(self.buffer)<128+n:break
+            if len(self.buffer)<128+n:return False
             body=bytes(self.buffer[128:128+n])
             if op==1:
                 need(n<=65536,'codec config limit');at=body.find(b'avcC');config=body[at+4:] if at>=4 else body
@@ -154,6 +155,8 @@ class ScreenReceiver:
                 raw=struct.unpack_from('<Q',header,8)[0];us=(raw>>32)*1000000+((raw&0xffffffff)*1000000>>32)
                 self.on_frame(plain,us)
             del self.buffer[:128+n]
+            processed+=1
+        return len(self.buffer)>=128
 
 def mfi_sap(body,der,certificate):
     need(len(body)==33 and body[0]==1,'MFiSAP input');seed=os.urandom(32);public=c.public(seed,True)

@@ -5,8 +5,44 @@
 	<key>audioFormats</key>
 	<array>
 		<dict>
+			<key>audioInputFormats</key>
+			<integer>80</integer>
 			<key>audioOutputFormats</key>
-			<integer>50172</integer>
+			<integer>53244</integer>
+			<key>audioType</key>
+			<string>compatibility</string>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioOutputFormats</key>
+			<integer>53244</integer>
+			<key>audioType</key>
+			<string>compatibility</string>
+			<key>type</key>
+			<integer>101</integer>
+		</dict>
+		<dict>
+			<key>audioInputFormats</key>
+			<integer>80</integer>
+			<key>audioOutputFormats</key>
+			<integer>53244</integer>
+			<key>audioType</key>
+			<string>default</string>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioOutputFormats</key>
+			<integer>53244</integer>
+			<key>audioType</key>
+			<string>alert</string>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioOutputFormats</key>
+			<integer>53244</integer>
 			<key>audioType</key>
 			<string>media</string>
 			<key>type</key>
@@ -14,24 +50,46 @@
 		</dict>
 		<dict>
 			<key>audioOutputFormats</key>
-			<integer>50172</integer>
-			<key>audioType</key>
-			<string>default</string>
-			<key>type</key>
-			<integer>100</integer>
-		</dict>
-		<dict>
-			<key>audioOutputFormats</key>
-			<integer>50172</integer>
+			<integer>53244</integer>
 			<key>audioType</key>
 			<string>default</string>
 			<key>type</key>
 			<integer>101</integer>
+		</dict>
+		<dict>
+			<key>audioOutputFormats</key>
+			<integer>12582912</integer>
+			<key>audioType</key>
+			<string>media</string>
+			<key>type</key>
+			<integer>102</integer>
+		</dict>
+		<dict>
+			<key>audioInputFormats</key>
+			<integer>80</integer>
+			<key>audioOutputFormats</key>
+			<integer>80</integer>
+			<key>audioType</key>
+			<string>telephony</string>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioInputFormats</key>
+			<integer>80</integer>
+			<key>audioOutputFormats</key>
+			<integer>80</integer>
+			<key>audioType</key>
+			<string>speechRecognition</string>
+			<key>type</key>
+			<integer>100</integer>
 		</dict>
 	</array>
 	<key>audioLatencies</key>
 	<array>
 		<dict>
+			<key>audioType</key>
+			<string>compatibility</string>
 			<key>inputLatencyMicros</key>
 			<integer>0</integer>
 			<key>outputLatencyMicros</key>
@@ -40,12 +98,64 @@
 			<integer>100</integer>
 		</dict>
 		<dict>
+			<key>audioType</key>
+			<string>compatibility</string>
 			<key>inputLatencyMicros</key>
 			<integer>0</integer>
 			<key>outputLatencyMicros</key>
 			<integer>0</integer>
 			<key>type</key>
 			<integer>101</integer>
+		</dict>
+		<dict>
+			<key>audioType</key>
+			<string>default</string>
+			<key>inputLatencyMicros</key>
+			<integer>0</integer>
+			<key>outputLatencyMicros</key>
+			<integer>0</integer>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioType</key>
+			<string>alert</string>
+			<key>inputLatencyMicros</key>
+			<integer>0</integer>
+			<key>outputLatencyMicros</key>
+			<integer>0</integer>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioType</key>
+			<string>media</string>
+			<key>inputLatencyMicros</key>
+			<integer>0</integer>
+			<key>outputLatencyMicros</key>
+			<integer>0</integer>
+			<key>type</key>
+			<integer>100</integer>
+		</dict>
+		<dict>
+			<key>audioType</key>
+			<string>default</string>
+			<key>inputLatencyMicros</key>
+			<integer>0</integer>
+			<key>outputLatencyMicros</key>
+			<integer>0</integer>
+			<key>type</key>
+			<integer>101</integer>
+		</dict>
+		<dict>
+			<key>audioType</key>
+			<string>media</string>
+			<key>inputLatencyMicros</key>
+			<integer>0</integer>
+			<key>outputLatencyMicros</key>
+			<integer>0</integer>
+			<key>type</key>
+			<integer>102</integer>
 		</dict>
 	</array>
 	<key>bluetoothIDs</key>
@@ -206,7 +316,7 @@
 		</array>
 	</dict>
 	<key>name</key>
-	<string>CarDash V3 Native Preview</string>
+	<string>CarDash V3</string>
 	<key>rightHandDrive</key>
 	<false/>
 	<key>sourceVersion</key>

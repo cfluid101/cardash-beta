@@ -16,7 +16,7 @@ LIMIT=32*1024*1024
 
 def provision(state,apk=None):
     if apk is None:
-        request=urllib.request.Request(URL,headers={'User-Agent':'CarDash-V3-Native-Preview/3.0.0-beta.1'})
+        request=urllib.request.Request(URL,headers={'User-Agent':'CarDash-V3-Native-Preview/3.0.0-beta.2'})
         with urllib.request.urlopen(request,timeout=25) as response:
             apk=response.read(LIMIT+1)
     if len(apk)>LIMIT or hashlib.sha256(apk).hexdigest()!=APK_SHA256:

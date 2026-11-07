@@ -22,9 +22,10 @@ import crypto
 from protocol import Pairing,ControlCipher,RtspParser,ScreenReceiver,mfi_sap,need
 from media import Muxer,keyframe
 from provision import CERT_SHA256
+from audio_transport import AudioChannel
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.1'
+VERSION='3.0.0-beta.2'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 
 def plist(data):return plistlib.dumps(data,fmt=plistlib.FMT_BINARY,sort_keys=False)
@@ -48,6 +49,8 @@ class Receiver:
         self.capture=None;self.capture_bytes=0;self.last_pointer=None
         self.provision_task=None;self.provision_child=None
         self.generation=None
+        self.audio_channels={};self.audio_history=[];self.audio_viewers={};self.audio_ducked=False;self.clock_offset=0
+        self.pending_commands={}
         self.log('service_started',version=VERSION)
     def log(self,event,**values):
         path=self.state/'diagnostic.ndjson'
@@ -62,8 +65,8 @@ class Receiver:
     def status(self):
         return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,
                     nativeFrames=self.frames,codec=self.codec,videoConnected=bool(self.video),eventConnected=bool(self.event),
-                    native=self.native,error=self.error,secondsRemaining=max(0,300-int(time.monotonic()-self.started)) if self.active else 0,
-                    audioSupported=False,sourceWidth=1280,sourceHeight=720)
+                    native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
+                    audioSupported=True,microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=1280,sourceHeight=720)
     async def prepare(self):
         if self.ready():return
         need(not self.provisioning,'Identity preparation is already running')
@@ -116,12 +119,14 @@ class Receiver:
             self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
             need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
             self.frames=0;self.codec=None;self.muxer=None;self.pending=None;self.native={};self.error='';self.capture_bytes=0
+            self.audio_history=[];self.audio_ducked=False;self.clock_offset=0
+            self.pending_commands.clear()
             self.generation=os.urandom(16).hex()
             if self.args.capture:
                 folder=Path(self.args.capture);folder.mkdir(parents=True,exist_ok=True,mode=0o700)
                 self.capture=(folder/'native.mp4').open('wb')
             public=crypto.public(bytes.fromhex(self.identity['seed'])).hex()
-            self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'300',stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
+            self.helper=await asyncio.create_subprocess_exec(self.args.helper,'62000',public,'0',stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
             self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False
             self.native_watch=asyncio.create_task(self.watch_helper(self.helper,self.generation))
             self.log('native_start',pid=self.helper.pid);return self.status()
@@ -135,6 +140,7 @@ class Receiver:
                     if self.generation in (generation,None):
                         if value.get('event')=='session_observation':self.native={k:value[k] for k in ['present','authenticated','activated']}
                         elif value.get('event')=='cleanup' and value.get('session_present') is False:self.native={'present':False,'authenticated':False,'activated':False}
+                        elif value.get('event')=='timing_sync':self.clock_offset=float(value['offset_seconds'])
                     self.log('native_helper',detail=value)
                 except (ValueError,KeyError):self.log('native_helper_output',text=line.decode(errors='replace')[:2000])
             code=await child.wait()
@@ -154,6 +160,12 @@ class Receiver:
             for queue in list(self.viewers):
                 try:queue.put_nowait(None)
                 except asyncio.QueueFull:pass
+            for channel in self.audio_channels.values():
+                self.audio_history.append(channel.status());channel.close()
+            self.audio_channels.clear();self.audio_ducked=False
+            for queue in list(self.audio_viewers):
+                try:queue.put_nowait(None)
+                except asyncio.QueueFull:pass
             self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
             if self.capture:self.capture.close();self.capture=None
             self.log('native_stop',reason=reason,frames=self.frames)
@@ -163,6 +175,8 @@ class Receiver:
             need(self.active and expected==self.generation,'Stale native session')
             need(self.active and self.event and self.ec,'Native input is unavailable')
             body=plist(value);self.sequence+=1
+            self.pending_commands[str(self.sequence)]=value['type']
+            if len(self.pending_commands)>128:self.pending_commands.pop(next(iter(self.pending_commands)))
             wire=(f'POST /command RTSP/1.0\r\nCSeq: {self.sequence}\r\nContent-Type: application/x-apple-binary-plist\r\nContent-Length: {len(body)}\r\n\r\n').encode()+body
             self.event.write(self.ec.encode(wire));await asyncio.wait_for(self.event.drain(),2)
             if value['type']=='hidSendReport':self.log('native_touch',sequence=self.sequence)
@@ -180,9 +194,65 @@ class Receiver:
         await asyncio.sleep(.5)
         if generation!=self.generation:return
         try:
-            await self.command({'type':'changeModes','params':{'resources':[{'resourceID':1,'transferType':2}]}},generation)
+            await self.command({'type':'changeModes','params':{'resources':[{'resourceID':1,'transferType':2},{'resourceID':2,'transferType':2}]}},generation)
             await self.command({'type':'showUI','params':{'url':'carplay:'}},generation)
         except Exception as e:self.log('show_ui_error',error=str(e))
+    def native_command(self,body):
+        if not body:return
+        value=plistlib.loads(body);kind=value.get('type')
+        if kind=='modesChanged':self.log('native_modes',params=value.get('params',{}))
+        if kind in ('duckAudio','unduckAudio'):
+            self.audio_ducked=kind=='duckAudio';self.log('audio_duck',active=self.audio_ducked)
+    async def setup_audio(self,offer):
+        key=(int(offer['type']),str(offer.get('audioType','default')).lower())
+        need(len(key[1])<=64,'Audio type length')
+        previous=self.audio_channels.get(key)
+        used={c.lane for c in self.audio_channels.values()};lane=previous.lane if previous else next((i for i in range(8) if i not in used),None)
+        need(lane is not None,'Audio stream limit')
+        channel=AudioChannel(self,offer,lane);generation=self.generation
+        result=await channel.listen()
+        if not self.active or generation!=self.generation:channel.close();raise ValueError('Stale audio setup')
+        if previous:self.audio_history.append(previous.status());previous.close()
+        self.audio_history=self.audio_history[-16:];self.audio_channels[key]=channel
+        self.log('audio_setup',**channel.status(),formatBits=offer.get('audioFormat'),latencyMs=offer.get('audioLatencyMs',150))
+        return result
+    def publish_audio(self,packet):
+        for queue,state in self.audio_viewers.items():
+            if state['closed']:continue
+            if not 16<=len(packet)<=65552:
+                state['closed']=True;self.log('audio_viewer_dropped',reason='packet_limit',packet_bytes=len(packet));continue
+            previous=state['dropped_packets'];reason='queue_limit' if queue.full() else 'byte_limit'
+            while state['bytes']+len(packet)>256*1024 or queue.full():
+                dropped=queue.get_nowait()
+                if dropped is None:
+                    queue.put_nowait(None);state['closed']=True;break
+                record,dropped=dropped
+                state['bytes']-=len(dropped);state['dropped_packets']+=1;state['dropped_bytes']+=len(dropped)
+                state['reset_lanes'][dropped[9]]=record
+            if state['closed']:continue
+            if state['dropped_packets']!=previous and (previous==0 or state['dropped_packets']//100>previous//100):
+                self.log('audio_viewer_lag',reason=reason,dropped_packets=state['dropped_packets'],dropped_bytes=state['dropped_bytes'],queued_bytes=state['bytes'],queued_packets=queue.qsize())
+            state['bytes']+=len(packet);state['next_record']+=1;queue.put_nowait((state['next_record'],packet))
+    async def audio_viewer(self,writer,generation,reader=None):
+        need(self.active and generation==self.generation,'Stale native session');need(len(self.audio_viewers)<2,'Two audio viewers are already connected')
+        queue=asyncio.Queue(maxsize=64);state={'bytes':0,'closed':False,'reset_lanes':{},'next_record':0,'dropped_packets':0,'dropped_bytes':0};self.audio_viewers[queue]=state
+        try:
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n');await asyncio.wait_for(writer.drain(),2)
+            while self.active and generation==self.generation and not state['closed'] and not (reader and reader.at_eof()):
+                try:packet=await asyncio.wait_for(queue.get(),2)
+                except asyncio.TimeoutError:
+                    if writer.is_closing() or (reader and reader.at_eof()):break
+                    continue
+                if packet is None or not self.active or generation!=self.generation or (reader and reader.at_eof()):break
+                record,packet=packet;state['bytes']-=len(packet)
+                # A discarded record may be the only reset for a replacement
+                # channel whose serial restarted. An earlier in-flight record
+                # must not consume the reset intended for newer queued data.
+                lane=packet[9]
+                if lane in state['reset_lanes'] and record>state['reset_lanes'][lane]:
+                    packet=packet[:11]+bytes([packet[11]|1])+packet[12:];del state['reset_lanes'][lane]
+                writer.write(packet);await asyncio.wait_for(writer.drain(),2)
+        finally:self.audio_viewers.pop(queue,None)
     async def control_client(self,reader,writer):
         if not self.active or self.control:writer.close();return
         self.control=writer;pair=Pairing(self.identity,self.save_identity);parser=RtspParser();cipher=None;generation=self.generation
@@ -210,13 +280,25 @@ class Receiver:
                                     ident=int(s['streamConnectionID'])&0xffffffffffffffff
                                     self.screen_key=crypto.hkdf(pair.shared,'DataStream-Salt'+str(ident),'DataStream-Output-Encryption-Key')
                                     streams.append({'type':110,'dataPort':62002})
+                                elif s.get('type') in (100,101,102):
+                                    streams.append(await self.setup_audio(s))
+                                else:self.log('unsupported_stream',type=s.get('type'))
                             reply={'streams':streams}
                         else:
                             if value.get('timingPort'):
                                 _,timing=await asyncio.open_connection('::1',62004);timing.write(struct.pack('>H',value['timingPort']));await timing.drain();timing.close()
                             reply={'timingPort':62003,'eventPort':62001,'enabledFeatures':['viewAreas']}
                         body=plist(reply);kind='application/x-apple-binary-plist'
-                    elif method in ('RECORD','SET_PARAMETER','TEARDOWN','OPTIONS') or path in ('/feedback','/command'):
+                    elif path=='/feedback':
+                        body=plist({'streams':[c.feedback(self.clock_offset) for c in self.audio_channels.values()]});kind='application/x-apple-binary-plist'
+                    elif method=='TEARDOWN':
+                        value=plistlib.loads(request['body']) if request['body'] else {}
+                        types={s.get('type') for s in value.get('streams',[])} if value.get('streams') else None
+                        for key,channel in list(self.audio_channels.items()):
+                            if types is None or channel.type in types:self.audio_history.append(channel.status());channel.close();del self.audio_channels[key]
+                        self.audio_history=self.audio_history[-16:]
+                    elif path=='/command':self.native_command(request['body'])
+                    elif method in ('RECORD','SET_PARAMETER','OPTIONS'):
                         if method=='RECORD':asyncio.create_task(self.modes(generation))
                     else:status=501
                     wire=response(request,status,body,kind);writer.write(cipher.encode(wire) if cipher else wire);await writer.drain()
@@ -236,7 +318,15 @@ class Receiver:
                 data=await reader.read(65536)
                 if not data or generation!=self.generation:break
                 for request in parser.push(ec.decode(data)):
-                    if request['method']!='RESPONSE':
+                    if generation!=self.generation:break
+                    if request['method']=='RESPONSE':
+                        kind=self.pending_commands.pop(request['headers'].get('cseq',''),None)
+                        if kind=='changeModes' or (not kind and request['body']):
+                            try:reply=plistlib.loads(request['body']) if request['body'] else {}
+                            except Exception:reply={'unparsedBytes':len(request['body'])}
+                            self.log('mode_response',command=kind,status=request['path'],sequence=request['headers'].get('cseq'),reply=reply)
+                    else:
+                        if request['path']=='/command':self.native_command(request['body'])
                         async with self.command_lock:
                             if generation!=self.generation:break
                             writer.write(ec.encode(response(request)));await writer.drain()
@@ -260,12 +350,13 @@ class Receiver:
             if fragment:
                 if self.capture and self.capture_bytes+len(fragment)<=32*1024*1024:self.capture.write(fragment);self.capture_bytes+=len(fragment)
                 for q,state in list(self.viewers.items()):
-                    if state['closed']:continue
+                    if state['closed'] or state['session']!=self.generation:continue
                     if not state['ready']:
                         if not oldkey:continue
                         fragment_out=self.initial+fragment;state['ready']=True
                     else:fragment_out=fragment
-                    if state['bytes']+len(fragment_out)>2*1024*1024 or q.full():state['closed']=True;continue
+                    if state['bytes']+len(fragment_out)>2*1024*1024 or q.full():
+                        state['closed']=True;self.log('video_viewer_dropped',reason='queue_limit' if q.full() else 'byte_limit',queued_bytes=state['bytes'],queued_fragments=q.qsize());continue
                     state['bytes']+=len(fragment_out);q.put_nowait(fragment_out)
         self.pending=(data,timestamp,key);self.frames+=1
         if self.frames<4 or self.frames%300==0:self.log('native_frame',frames=self.frames)
@@ -276,7 +367,14 @@ class Receiver:
             while True:
                 data=await reader.read(65536)
                 if not data or generation!=self.generation:break
-                parser.push(data)
+                while True:
+                    more=parser.push(data,max_packets=8);data=b''
+                    # Buffered native reads can contain many small frames at once.
+                    # Let HTTP writers drain instead of overflowing a healthy viewer.
+                    await asyncio.sleep(0)
+                    while generation==self.generation and any(not s['closed'] and q.qsize()>32 for q,s in self.viewers.items()):
+                        await asyncio.sleep(.001)
+                    if generation!=self.generation or not more:break
         except Exception as e:self.error=str(e);self.log('video_error',error=str(e))
         finally:
             writer.close()
@@ -289,6 +387,9 @@ class Receiver:
             if not self.active:continue
             elapsed=time.monotonic()-self.last_heartbeat
             if elapsed>(12 if self.had_viewer else 45):await self.stop('browser_timeout');continue
+            if self.helper and self.helper.stdin:
+                try:self.helper.stdin.write(b'H');await asyncio.wait_for(self.helper.stdin.drain(),1)
+                except (BrokenPipeError,ConnectionError,asyncio.TimeoutError):await self.stop('native_lease_failed');continue
             if self.viewers and self.event:
                 try:await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}})
                 except Exception as e:self.log('keyframe_error',error=str(e))
@@ -302,6 +403,8 @@ class Receiver:
         if action=='touch':return await self.touch(value)
         if action=='prepare' and local:await self.prepare();return self.status()
         if action=='import' and local:return await self.import_identity()
+        if action=='release_audio' and local:
+            await self.command({'type':'changeModes','params':{'resources':[{'resourceID':2,'transferType':2}]}});return self.status()
         if action=='report' and local:
             text=''
             for name in ['installation.log','service-bootstrap.log','diagnostic.previous.ndjson','diagnostic.ndjson']:
@@ -347,12 +450,14 @@ class Receiver:
             body=await asyncio.wait_for(reader.readexactly(length),5) if length else b''
             cookie=dict(v.strip().split('=',1) for v in headers.get('cookie','').split(';') if '=' in v)
             authenticated=hmac.compare_digest(cookie.get('cdv3',''),self.token)
-            if method=='GET' and path in ('/','/client.js'):
-                name='index.html' if path=='/' else 'client.js';data=(ROOT.parent/'web'/name).read_bytes()
+            if method=='GET' and path in ('/','/client.js','/audio.js'):
+                name='index.html' if path=='/' else path[1:];data=(ROOT.parent/'web'/name).read_bytes()
                 await self.reply(writer,200,data,'text/html' if path=='/' else 'text/javascript',{'Set-Cookie':f'cdv3={self.token}; HttpOnly; SameSite=Strict; Path=/'})
             elif not authenticated:await self.reply(writer,403,b'Open the CarDash page first','text/plain')
             elif method=='GET' and path=='/api/status':await self.reply(writer,200,json.dumps(self.status()).encode())
-            elif method=='GET' and path=='/video':await self.viewer(writer)
+            elif method=='GET' and path=='/video':
+                need(self.active and headers.get('x-cardash-session')==self.generation,'Stale native session');await self.viewer(writer,reader)
+            elif method=='GET' and path=='/audio':await self.audio_viewer(writer,headers.get('x-cardash-session'),reader)
             elif method=='POST' and path.startswith('/api/'):
                 value=json.loads(body or b'{}');value['action']=path[5:];result=await self.action(value);await self.reply(writer,200,json.dumps(result).encode())
             else:await self.reply(writer,404,b'Not found','text/plain')
@@ -365,18 +470,18 @@ class Receiver:
         values={'Content-Type':kind,'Content-Length':str(len(data)),'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Connection':'close',**(extra or {})}
         header=f'HTTP/1.1 {status} '+('OK' if status==200 else 'Error')+'\r\n'+''.join(k+': '+v+'\r\n' for k,v in values.items())+'\r\n'
         writer.write(header.encode()+data);await asyncio.wait_for(writer.drain(),5)
-    async def viewer(self,writer):
+    async def viewer(self,writer,reader=None):
         need(self.active and self.video and self.muxer,'Native video is not ready');need(len(self.viewers)<2,'Two viewers are already connected')
         q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
-        writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n');await writer.drain()
         try:
-            await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}})
-            while self.active and not state['closed']:
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n');await asyncio.wait_for(writer.drain(),3)
+            await self.command({'type':'forceKeyFrame','params':{'uuid':DISPLAY}},state['session'])
+            while self.active and state['session']==self.generation and not state['closed'] and not (reader and reader.at_eof()):
                 try:fragment=await asyncio.wait_for(q.get(),4)
                 except asyncio.TimeoutError:
-                    if writer.is_closing():break
+                    if writer.is_closing() or (reader and reader.at_eof()):break
                     continue
-                if fragment is None:break
+                if fragment is None or not self.active or state['session']!=self.generation or (reader and reader.at_eof()):break
                 state['bytes']-=len(fragment);writer.write(fragment);await asyncio.wait_for(writer.drain(),3)
         finally:
             self.viewers.pop(q,None)

@@ -1,6 +1,10 @@
-# CarDash CarPlay Diagnostics 0.1.3
+# CarDash V3 Native Beta
 
-For the separate **CarDash V3 Native Preview beta**, see [V3 setup and limitations](v3/README.md) and [release validation](v3/TEST-RESULTS.md). V3 runs the native video/touch receiver on the phone. The diagnostic tool described below remains separate.
+For **CarDash V3 beta 2**, see [setup and compatibility](v3/README.md), [release validation](v3/TEST-RESULTS.md) and [beta downloads](https://github.com/cfluid101/cardash-beta/releases). V3 runs native CarPlay video, touch and audio output on the phone, with no fixed session-duration limit. The supported target is iPhone 8 Plus, iOS 16.6 build 20G75, rootless. Full-app interfaces tested with CarBridge require that separate tweak; microphone input is not supported. Tesla vehicle testing remains necessary.
+
+## Historical CarPlay Diagnostics 0.1.3
+
+The diagnostic tool below remains in the source repository for research provenance. It is not needed to install or use V3. Its historical limits and results do not describe the current V3 receiver.
 
 Standalone rootless diagnostic for **iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine**. It attempts the known native session-start API and collects one shareable log. It is not a replacement CarDash beta or a complete CarPlay receiver.
 

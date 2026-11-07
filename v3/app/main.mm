@@ -44,13 +44,13 @@ static NSString *Addresses(){
  UIStackView *stack=[[UIStackView alloc]init];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=14;stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
  [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],[scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:24],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-24],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-48]]];
  UILabel *title=[self label:@"CarDash V3" size:32];title.font=[UIFont systemFontOfSize:32 weight:UIFontWeightBold];[stack addArrangedSubview:title];
- [stack addArrangedSubview:[self label:@"Native Preview · 3.0.0 beta 1" size:17]];
- [stack addArrangedSubview:[self label:@"Real iOS 16 CarPlay video and touch. Five-minute beta trials. Audio is not available yet." size:15]];
+ [stack addArrangedSubview:[self label:@"Native CarPlay · 3.0.0 beta 2" size:17]];
+ [stack addArrangedSubview:[self label:@"Native CarPlay video, touch and music/navigation audio. Sessions continue while connected. Microphone input, calls and Siri voice input are not supported in this beta." size:15]];
  self.status=[self label:@"Connecting to the V3 service…" size:16];[stack addArrangedSubview:self.status];
- self.prepare=[self button:@"Prepare Native Preview" action:@selector(prepareTapped)];[stack addArrangedSubview:self.prepare];
+ self.prepare=[self button:@"Prepare CarPlay" action:@selector(prepareTapped)];[stack addArrangedSubview:self.prepare];
  [stack addArrangedSubview:[self button:@"Import downloaded DiPlay APK" action:@selector(importTapped)]];
- self.start=[self button:@"Start five-minute trial" action:@selector(startTapped)];[stack addArrangedSubview:self.start];
- self.stop=[self button:@"Stop trial" action:@selector(stopTapped)];[stack addArrangedSubview:self.stop];
+ self.start=[self button:@"Start CarPlay" action:@selector(startTapped)];[stack addArrangedSubview:self.start];
+ self.stop=[self button:@"Stop CarPlay" action:@selector(stopTapped)];[stack addArrangedSubview:self.stop];
  [stack addArrangedSubview:[self label:@"Connect the car to Personal Hotspot, then open:" size:15]];
  self.addresses=[self label:Addresses() size:16];self.addresses.textColor=[UIColor colorWithRed:.45 green:.78 blue:1 alpha:1];[stack addArrangedSubview:self.addresses];
  [stack addArrangedSubview:[self button:@"Open local preview in Safari" action:@selector(safariTapped)]];
@@ -66,8 +66,8 @@ static NSString *Addresses(){
  NSString *error=s[@"error"];
  if(error.length)self.status.text=error;
  else if(preparing)self.status.text=@"Preparing the experimental identity…";
- else if(active)self.status.text=[NSString stringWithFormat:@"Native trial running · %@ seconds left\n%@ video frames received",s[@"secondsRemaining"],s[@"nativeFrames"]];
- else self.status.text=ready?@"Ready. Start a trial here or in the car’s browser.":@"Tap Prepare once to enable native testing.";
+ else if(active)self.status.text=[NSString stringWithFormat:@"CarPlay connected · %@ seconds\n%@ video frames received",s[@"sessionSeconds"],s[@"nativeFrames"]];
+ else self.status.text=ready?@"Ready. Start CarPlay here or in the car’s browser.":@"Tap Prepare once to enable native testing.";
  self.addresses.text=Addresses();
 }
 - (void)perform:(NSString *)action {
@@ -76,7 +76,7 @@ static NSString *Addresses(){
 }
 - (void)refresh {[self perform:@"status"];}
 - (void)prepareTapped {
- UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Prepare Native Preview" message:@"Download the verified public DiPlay experimental identity for this test? This uses about 18 MB and does not provide MFi certification." preferredStyle:UIAlertControllerStyleAlert];
+ UIAlertController *a=[UIAlertController alertControllerWithTitle:@"Prepare CarPlay" message:@"Download the verified public DiPlay experimental identity for this test? This uses about 18 MB and does not provide MFi certification." preferredStyle:UIAlertControllerStyleAlert];
  [a addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
  [a addAction:[UIAlertAction actionWithTitle:@"Prepare" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *x){[self perform:@"prepare"];}]];[self presentViewController:a animated:YES completion:nil];
 }

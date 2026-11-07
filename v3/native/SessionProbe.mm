@@ -5,6 +5,8 @@
 #include <dlfcn.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 #include "Timing.h"
 @interface NSObject (ReceiverCarKit)
 - (id)initWithDisplayName:(id)n wiredIPv6Addresses:(id)w wirelessIPv6Addresses:(id)r port:(long long)p carplayWiFiUUID:(id)u deviceIdentifier:(id)i publicKey:(id)k sourceVersion:(id)v wiredCarPlaySimulator:(BOOL)s;
@@ -21,8 +23,9 @@ static void pump(double s){double end=CDClock()+s;while(CDClock()<end)CFRunLoopR
 int main(int argc,char **argv){@autoreleasepool{
  if(argc!=4)return 2;
  int port=atoi(argv[1]),duration=atoi(argv[3]);NSString *key=@(argv[2]);
- if(port<1024||port>65535||duration<5||duration>300||key.length!=64||[key rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location!=NSNotFound)return 2;
- signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGHUP,stop);signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(duration+5);pid_t parent=getppid();
+ if(port<1024||port>65535||duration<0||key.length!=64||[key rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location!=NSNotFound)return 2;
+ signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGHUP,stop);signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(20);pid_t parent=getppid();
+ if(fcntl(STDIN_FILENO,F_SETFL,fcntl(STDIN_FILENO,F_GETFL)|O_NONBLOCK)<0)return 2;
  if(![CDSystem("hw.machine") isEqual:@"iPhone10,2"]||![CDSystem("kern.osversion") isEqual:@"20G75"]){CDEmit(@"wrong_target",@{});return 3;}
  void *h=dlopen("/System/Library/PrivateFrameworks/CarKit.framework/CarKit",RTLD_NOW|RTLD_LOCAL);if(!h)return 4;
  Class hc=NSClassFromString(@"CARSessionRequestHost"),cc=NSClassFromString(@"CARSessionRequestClient"),sc=NSClassFromString(@"CARSessionStatus");
@@ -33,11 +36,15 @@ int main(int argc,char **argv){@autoreleasepool{
  Timing timing;if(!timing.start()){CDEmit(@"timing_bind_failed",@{});return 9;}
  id client=[[cc alloc] init];
  @try{
- id host=[[hc alloc] initWithDisplayName:@"CarDash V3 Native Preview" wiredIPv6Addresses:@[@"::1"] wirelessIPv6Addresses:@[] port:port carplayWiFiUUID:nil deviceIdentifier:@"02:43:44:4c:41:42" publicKey:key sourceVersion:@"509.0" wiredCarPlaySimulator:YES];
+ id host=[[hc alloc] initWithDisplayName:@"CarDash V3" wiredIPv6Addresses:@[@"::1"] wirelessIPv6Addresses:@[] port:port carplayWiFiUUID:nil deviceIdentifier:@"02:43:44:4c:41:42" publicKey:key sourceVersion:@"509.0" wiredCarPlaySimulator:YES];
  NSError *error=nil;if(!CDSecureHostRoundTrip(host,&error)){CDEmit(@"archive_failed",@{@"error":error.description?:@""});return 8;}
  CDEmit(@"request_started",@{@"port":@(port),@"duration":@(duration),@"pid":@(getpid())});
  [client startSessionWithHost:host completion:^(BOOL success,NSError *error){CDEmit(@"native_completion",@{@"success":@(success),@"error":error.description?:@""});}];
- double start=CDClock(),last=0;while(!stopped&&getppid()==parent&&CDClock()-start<duration){timing.step();if(CDClock()-last>1){id current=[observer currentSession];id authenticated=NSNull.null,activated=NSNull.null;if(current&&CDMethodMatches([current class],@"isAuthenticated","B",@[],NO,YES))authenticated=@([current isAuthenticated]);if(current&&CDMethodMatches([current class],@"isActivated","B",@[],NO,YES))activated=@([current isActivated]);CDEmit(@"session_observation",@{@"present":@(current!=nil),@"authenticated":authenticated,@"activated":activated,@"timing_requests":@(timing.requests),@"timing_replies":@(timing.replies)});last=CDClock();}pump(.02);}
+ double start=CDClock(),last=0,lease=start;while(!stopped&&getppid()==parent&&(!duration||CDClock()-start<duration)){@autoreleasepool{
+ char heartbeat[64];ssize_t n=read(STDIN_FILENO,heartbeat,sizeof(heartbeat));
+ if(n>0){lease=CDClock();alarm(20);}else if(n==0||(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){CDEmit(@"parent_pipe_closed",@{});break;}
+ if(CDClock()-lease>15){CDEmit(@"parent_lease_expired",@{});break;}
+ timing.step();if(CDClock()-last>1){id current=[observer currentSession];id authenticated=NSNull.null,activated=NSNull.null;if(current&&CDMethodMatches([current class],@"isAuthenticated","B",@[],NO,YES))authenticated=@([current isAuthenticated]);if(current&&CDMethodMatches([current class],@"isActivated","B",@[],NO,YES))activated=@([current isActivated]);CDEmit(@"session_observation",@{@"present":@(current!=nil),@"authenticated":authenticated,@"activated":activated,@"timing_requests":@(timing.requests),@"timing_replies":@(timing.replies)});last=CDClock();}pump(.02);}}
  }@catch(NSException *e){CDEmit(@"exception",@{@"name":e.name,@"reason":e.reason?:@""});}
- [client cancelRequests];pump(1);CDEmit(@"cleanup",@{@"session_present":@([observer currentSession]!=nil)});return 0;
+ alarm(5);[client cancelRequests];pump(1);CDEmit(@"cleanup",@{@"session_present":@([observer currentSession]!=nil)});return 0;
 }}

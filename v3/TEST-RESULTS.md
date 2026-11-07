@@ -1,37 +1,41 @@
-# CarDash V3 Native Preview beta 1 — validation
+# CarDash V3 beta 2 — validation
 
-Tested November 6, 2026 (Pacific), on the connected iPhone 8 Plus, iOS 16.6 build 20G75, Dopamine rootless. The original CarDash/V2 files and preferences were protected throughout. This is a native video/touch preview, not a declaration that the complete CarDash product requirements are finished.
+Test device: iPhone 8 Plus (`iPhone10,2`), iOS 16.6 build 20G75, Dopamine rootless. The receiver runs on the phone. The Mac forwards HTTP only; it does not receive/decrypt native CarPlay or host the native session.
 
-## Verified
+## Physical-device results
 
-| Check | Result |
-|---|---|
-| Original Mac launcher failure | A second launch collided with the still-running receiver on port 46201. The kernel lock prevents concurrent trials; reopening reused the existing viewer. The corrected live Mac trial displayed 604 frames, zero drops, and four HID reports. |
-| Phone-resident package | Installed separately as `com.cfluid.cardash.v3`. Receiver, authentication, video decrypt/remux, and native input ran on the phone under launchd. The Mac forwarded only HTTP for the browser trial; it did not host the native receiver. |
-| Native authentication and activation | CarKit reported both authenticated and activated. Real iOS 16.6 CarPlay frames reached Chrome; Home and Waze selection were sent through native HID. |
-| Full timed trial | Passed at 303.212 seconds including setup/cleanup observation; 8,422 native frames received. Initial browser sample: 605 total frames, one drop, 0.189 s buffer lag. Late sample: 6,827 total frames, four drops, 0.182 s buffer lag, no decoder error. These are measured buffer lag values, not end-to-end touch latency. |
-| Release-code smoke and reconnect | After the report-read change, the installed receiver displayed 602 frames with two drops, four HID reports and 0.181 s buffer lag. Closing its browser triggered `browser_timeout` and native cleanup. A fresh browser automatically connected, reused the active session without creating a duplicate, remembered identity readiness, and could stop it; expired input was rejected. The V3 companion also launched and the phone remained unlocked/display-on. |
-| Browser geometry | Decoded source stayed 1280×720 while the browser resized from 1280×760 to 1600×900. |
-| Teardown | After bounded cleanup, CarKit reported no session, authenticated/activated false, video/event sockets closed, and no service error. The launchd receiver remained on its first launch for the trial. |
-| Service memory correction | The rootless launchd proxy ignored the declared memory allowance and initially killed valid APK import at its 6 MB limit. The fix sets only each V3 process’s own 128 MB active/inactive limit and verifies it through the kernel. Independent readback confirmed `[128,1,128,1]`. No global or unrelated-process policy changed. |
-| Identity setup | A fresh download from the pinned official DiPlay release passed SHA-256 and certificate/key verification on the phone after internet connectivity was restored. Invalid APK data was rejected. Valid APK import as mobile UID 501 succeeded after the memory fix without restarting the service. |
-| Access and stale requests | During the full native trial, stale stop/heartbeat/touch requests and a cross-origin stop request returned rejection; the active native session was unchanged. |
-| Diagnostic export | Mobile UID 501 retrieved the combined report, including memory-policy and native-session events. No private key, receiver seed or viewer cookie was present in the checked report. A host test covers bounded reads of oversized supporting logs. |
-| Host tests | 16 V3 Python tests, 21 reference receiver JavaScript tests, and one cross-process launcher-lock test passed: 38 total. Covers crypto vectors/forgery, fragmented/replayed protocol frames, MP4 byte parity, stale input, HTTP access checks, memory-policy failure, malformed provisioning and rootless DEB boundaries. |
-| Physical crypto/protocol checks | Five tests passed under the phone’s Python runtime with its signed OpenSSL bridge. The native video captured by the development lab also independently decoded in FFmpeg. The distributed release does not record video. |
-| Preservation | Original project: 585 entries unchanged; original DEB unchanged. Product baseline: 203 files unchanged. Protected installed files/preferences: all 23 hashes unchanged. |
+- Native authentication, activation, H.264 video, HID input and actual music audio work together. Audio negotiated `type100/media`, 44.1 kHz stereo PCM, with nonzero decoded samples and no authenticated-packet rejects in the measured trials. The browser AudioContext ran and produced nonzero analyser output. The user independently confirmed clear music from the Mac speakers.
+- After removing V2/Canary, CarPlay Diagnostics and CarPlay Loopback, restarting the affected processes and respringing, a **105.68-second continuously locked trial passed**. Immortalizer's injection files were temporarily isolated for this test. Waze → YouTube Music → pause → resume → Waze → YouTube Music all worked through native input. Screenshots confirmed the app and control changes; independent MediaRemote observations confirmed playing=1, then 0, then 1 on the CarAudio route. The browser finished with 4,086 decoded frames, one video connection, zero video errors and one audio connection. It recorded no audio sequence gaps, one scheduling drop and three underruns across the deliberate pause/resume sequence.
+- A separate wake test observed the display turn on while lock state remained locked, then verified another 30.09 seconds of continuous audio/video. It ended with 5,424 decoded frames, one video connection, no video errors and no audio sequence gaps.
+- The final corrected session reached **420 seconds (seven minutes)** with 11,841 decoded browser frames, one video connection, zero video errors and one audio connection. Browser audio processed 17,038,230 sample frames, with no sequence gaps. Its one scheduling drop and three underruns came from the earlier deliberate pause/resume sequence; neither count grew during continued playback. The phone remained locked through the final endurance observation.
+- A prior 106.11-second locked trial also passed before old test-hook removal. That result alone was not used to claim independence from those hooks.
+- Closing the browser without pressing Stop ended the native session in 16.46 seconds, including cancellation. A fresh browser then authenticated and activated a new native session, displayed YouTube Music and played audio while the phone remained locked. The old session's input was rejected. Separate stale-session video/audio/touch/stop/heartbeat requests also returned errors without disrupting the active session. Playback was explicitly paused before cleanup.
+- Independent synthetic AAC-LC 44.1/48 kHz stereo vectors decoded on the physical phone to 12,288/13,312 frames, RMS 1933.26/1930.58 respectively. Native AAC negotiation has not been observed; actual music trials used PCM.
+- The kernel readback confirmed the receiver's own active/inactive memory limits at 128 MB. This is a configured limit, not a measured guarantee of long-term memory use.
 
-The full trial used the final native receiver/transport logic. Subsequent source changes bounded report-export reads and handled an immediate duplicate-launch startup race; these do not change the native transport. Rejected/interrupted development trials are retained privately and are not counted as passes. Raw reports/screenshots are excluded from public assets because they may contain device or location details.
+## Fixes verified during acceptance
 
-## Still needs device/vehicle testing
+The five-minute product deadline is removed. Browser-disconnect cleanup, parent-death/EOF handling, a renewable native-process lease and bounded queues remain. Sessions are not kept alive after an abandoned browser indefinitely.
 
-- Tesla’s actual browser over Personal Hotspot, physical USB disconnect, network changes, sleep/reconnect, and car-specific Full screen behavior. The Mac and phone were on different networks, so browser acceptance used a USB HTTP forward.
-- Locked-phone cold start, repeated app switching while locked, wake/rotation interactions, calls and Siri interruptions with this new V3 native receiver. Earlier V2 Canary results do not prove these V3 cases.
-- YouTube Music playback/artwork, YouTube video, keyboard entry, long gestures/multitouch and other apps under the packaged V3 receiver. CarBridge was already installed; arbitrary-app support without it is not established.
-- Other phone models/builds, other jailbreaks, fresh bootstrap installs and dependency resolution on a tester’s network. The installer intentionally rejects unverified models/builds.
-- Manual companion Files-picker/share-sheet interaction and new-network Safari checks. The underlying mobile-user import/export IPC paths were tested directly.
-- Long-duration battery, thermal and memory behavior beyond five-minute trials; audio output, microphone and adaptive native source resolution are not implemented.
+The original audio failure was iOS rejecting the incomplete duplex format table with `APCarPlayAudioFormatsCreate kParamErr(-6705)` for 100/telephony. Supplying the required 16/24 kHz mono input declarations enabled media audio. No microphone capture is implemented; requested input transport sends authenticated silence and is explicitly labelled unsupported for voice input.
 
-## Tester record
+An earlier endurance run reached 409 seconds without a video error but later exposed an asynchronous SourceBuffer trim race. The busy-buffer guard now has a regression test. Clean-runtime testing then exposed a buffered-native-frame burst overflowing a healthy HTTP viewer queue. The parser now processes bounded batches and lets the writer drain. A 220-frame encrypted burst regression fails against the prior implementation and passes with the correction. These earlier failed runs are not presented as final acceptance passes.
 
-Test while parked. Record package version, phone/build/jailbreak, browser/car version, app selected, whether the phone was locked, and the steps leading to any failure. Export the single report from CarDash V3 after the issue and review it before sharing. A five-minute timeout or cleanup roughly 12 seconds after browser heartbeats stop is expected. No reinstall is needed to start another trial.
+Audio overflow discards oldest records within a 64-record/256 KiB bound, preserving per-lane reset markers. It does not force a reconnect for a transient burst. Blocked network writers still time out. Browser scheduling is bounded to 0.5 seconds. Reconnect tests cover quiet EOF, failed headers, stale generations, old callbacks and queued touches. Real-device browser Mute/Unmute checks preserve the native session.
+
+## Local checks and preservation
+
+- **47 Python tests, 13 focused browser tests, 21 reference receiver JavaScript tests and one cross-process launcher test pass (82 total).** They cover authentication/framing, malformed audio, replay rejection, AAC decoding, queue bounds, decoder lifecycle, asynchronous viewer cleanup and package isolation. The real Chrome gesture check also passed without an autoplay-policy bypass using synthetic audio; physical audio trials used the browser Start gesture.
+- The original project has 585 unchanged entries and its original DEB is unchanged. The 203-file update-product baseline is unchanged. All 22 original installed payload/preference hashes match.
+- Current V2 preferences are preserved byte-for-byte across its uninstall. They differed from a much earlier baseline before this cleanup, so that older file was not restored over the user's current settings.
+- Raw device logs, screenshots, identity material and audio fixtures remain private. The package and corresponding source contain no Apple binaries, upstream APK, accessory private key, paired identity, SSH key or captured media.
+
+## Remaining vehicle and compatibility checks
+
+Tesla's actual browser and speaker routing, Personal Hotspot interruption/recovery, USB-free operation, navigation voice prompts mixed with music, and long-duration thermal/battery behavior require testing in the car. A minutes-long Mac-browser trial does not establish those results. Source resolution is fixed 1280×720 landscape; adaptive source resolution is not implemented. Microphone/Siri/call input is unsupported. Other phone models/iOS builds are unverified and rejected by the installer.
+
+CarBridge and Immortalizer were preexisting third-party packages. Full-app interfaces shown during these trials use CarBridge; this release does not replace or bundle it. Results without CarBridge must not be inferred. The clean locked trial ran without Immortalizer injection; its files are restored after testing. YouTube Music's installed old version shows an unsupported-version message, while its existing Now Playing playback remains usable on this device.
+
+## Release artifacts
+
+The downloadable DEB is built from the tagged source commit. Its manifest records that commit and hashes every payload file. The matching source archive includes `SOURCE-COMMIT.txt`; the published checksum file names the actual GitHub assets. Release assembly compares executable/backend/web payload hashes against the physical-device candidate so documentation/provenance changes cannot silently replace tested runtime code.
