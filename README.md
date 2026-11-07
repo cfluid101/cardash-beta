@@ -1,5 +1,7 @@
 # CarDash CarPlay Diagnostics 0.1.3
 
+For the separate **CarDash V3 Native Preview beta**, see [V3 setup and limitations](v3/README.md) and [release validation](v3/TEST-RESULTS.md). V3 runs the native video/touch receiver on the phone. The diagnostic tool described below remains separate.
+
 Standalone rootless diagnostic for **iPhone 8 Plus (`iPhone10,2`), iOS 16.6 (`20G75`), Dopamine**. It attempts the known native session-start API and collects one shareable log. It is not a replacement CarDash beta or a complete CarPlay receiver.
 
 ## On the phone

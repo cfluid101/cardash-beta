@@ -1,0 +1,10 @@
+Package: com.cfluid.cardash.v3
+Name: CarDash V3 Native Preview
+Version: 3.0.0~beta.1
+Architecture: iphoneos-arm64
+Section: Tweaks
+Depends: firmware (>= 16.6), firmware (<< 16.7), python3 (>= 3.9), libssl3, uikittools
+Maintainer: cfluid
+Author: cfluid
+Homepage: https://github.com/cfluid101/cardash-beta
+Description: Separate native CarPlay video/touch preview for iPhone 8 Plus on iOS 16.6 build 20G75, rootless. Runs on the phone; five-minute trials. Audio is not implemented. Preserves original CarDash and V2 settings.

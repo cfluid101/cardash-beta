@@ -7,12 +7,31 @@ import sys
 import threading
 import time
 import urllib.request
+from session_lock import active_trial
 
 ROOT = Path(__file__).resolve().parents[1]
 DURATION = 150
 
 
 def main():
+    existing = active_trial(ROOT / 'evidence/receiver-live')
+    if existing:
+        token = None
+        for _ in range(50):
+            try:
+                token = (existing / 'control-token.txt').read_text().strip()
+                if token:
+                    break
+            except OSError:
+                pass
+            time.sleep(.1)
+        if not token:
+            print('The existing trial is still starting. Keep its Terminal window open; no second receiver was started.')
+            return 0
+        subprocess.run(['/usr/bin/open', '-a', 'Google Chrome',
+                        'http://127.0.0.1:46205/#' + token], check=True)
+        print('Reopened the already-running trial. Its original timer is unchanged.')
+        return 0
     print("Keep the iPhone connected by USB, unlocked, with CarDash V2 visible.", flush=True)
     print("Starting a 150-second native CarPlay video/touch test. Audio is not implemented.", flush=True)
     child = subprocess.Popen(
