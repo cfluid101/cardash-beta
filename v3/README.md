@@ -1,3 +1,5 @@
+> **Local service-diagnostics candidate 1.** See [SERVICE-DIAGNOSTICS.md](SERVICE-DIAGNOSTICS.md). This adds offline export and connection-error evidence; it does not establish RootHide service or native-session compatibility. The public HTTPS3 release is unchanged.
+
 # CarDash V3 Beta 5 — HTTPS3
 
 A separate, phone-resident **native CarPlay video, touch and audio-output beta** with experimental installation on other rootless arm64 devices. Native operation has been verified on iPhone 8 Plus / iOS 16.6 build 20G75; other targets are unverified. Sessions have no fixed time limit. The receiver runs entirely on the phone; a running session needs no Mac, USB cable, SSH connection or browser setup code.

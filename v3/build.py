@@ -2,7 +2,7 @@
 """Build an isolated V3 rootless DEB. This script never deploys or connects."""
 from pathlib import Path
 import subprocess,plistlib,hashlib,json,shutil,io,tarfile,os,importlib.util,re
-ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.5+https.3.open.1'
+ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.5+https.3.open.1.diag.1'
 def run(args):subprocess.run([str(x) for x in args],check=True,cwd=ROOT)
 def writeplist(path,value):path.write_bytes(plistlib.dumps(value))
 def source_commit():
@@ -26,11 +26,11 @@ def main():
  video=OUT/'libcardashvideo.dylib';run(['xcrun','--sdk','iphoneos','clang','-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.0','-dynamiclib','-std=c11','-Wall','-Wextra','-Werror',SRC/'native/VideoDecode.c','-framework','VideoToolbox','-framework','CoreMedia','-framework','CoreVideo','-framework','CoreGraphics','-framework','ImageIO','-framework','CoreFoundation','-install_name','/var/jb/usr/lib/cardash-v3/backend/libcardashvideo.dylib','-o',video]);sign(video)
  network=OUT/'libcardashnetwork.dylib';run(['xcrun','--sdk','iphoneos','clang','-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.0','-dynamiclib','-Wall','-Wextra','-Werror',SRC/'native/Network.c','-install_name','/var/jb/usr/lib/cardash-v3/backend/libcardashnetwork.dylib','-o',network]);sign(network)
  loopback=OUT/'CarDashV3Loopback.dylib';run([*flags,SRC/'native/Loopback.mm',SRC/'native/AudioRoute.mm',SRC/'native/VideoBudget.mm','-dynamiclib','-framework','Foundation','-install_name','/var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib','-o',loopback]);sign(loopback)
- app=OUT/'CarDashV3.app';app.mkdir(exist_ok=True);run([*flags,SRC/'app/main.mm','-framework','Foundation','-framework','UIKit','-o',app/'CarDashV3'])
- writeplist(app/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.v3.host','CFBundleExecutable':'CarDashV3','CFBundleName':'CarDash V3','CFBundleDisplayName':'CarDash V3','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'3.1','CFBundleShortVersionString':'3.0.0','MinimumOSVersion':'16.0','CFBundleSupportedPlatforms':['iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
+ app=OUT/'CarDashV3.app';app.mkdir(exist_ok=True);run([*flags,SRC/'app/main.mm',SRC/'app/ServiceClient.mm',SRC/'app/ServiceDiagnostics.mm',SRC/'app/ServiceEnvironment.mm','-framework','Foundation','-framework','UIKit','-o',app/'CarDashV3'])
+ writeplist(app/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.v3.host','CFBundleExecutable':'CarDashV3','CFBundleName':'CarDash V3','CFBundleDisplayName':'CarDash V3','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'3.2','CDV3PackageVersion':VERSION,'CFBundleShortVersionString':'3.0.0','MinimumOSVersion':'16.0','CFBundleSupportedPlatforms':['iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
  spec=importlib.util.spec_from_file_location('diagnostic_build',ROOT/'build.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
  module.icon(app/'AppIcon@2x.png',120);module.icon(app/'AppIcon@3x.png',180)
- appent=OUT/'app-entitlements.plist';writeplist(appent,{'application-identifier':'com.cfluid.cardash.v3.host','platform-application':True,'com.apple.private.security.no-sandbox':True,'com.apple.private.security.container-required':False});sign(app,appent)
+ appent=OUT/'app-entitlements.plist';writeplist(appent,{'application-identifier':'com.cfluid.cardash.v3.host','platform-application':True,'com.apple.private.security.no-sandbox':True,'com.apple.private.security.container-required':False,'com.apple.private.security.storage.AppBundles':True,'com.apple.private.security.storage.AppDataContainers':True});sign(app,appent)
  stage=OUT/'stage'
  if stage.exists():shutil.rmtree(stage)
  for name in ['DEBIAN','var/jb/usr/libexec','var/jb/usr/lib/cardash-v3/backend','var/jb/usr/lib/cardash-v3/web','var/jb/Applications','var/jb/Library/LaunchDaemons','var/jb/Library/MobileSubstrate/DynamicLibraries']:(stage/name).mkdir(parents=True,exist_ok=True)
@@ -44,7 +44,7 @@ def main():
  for library in [crypto,audio,video,network]:shutil.copy2(library,stage/'var/jb/usr/lib/cardash-v3/backend'/library.name)
  for path in (SRC/'web').iterdir():
   if path.is_file():shutil.copy2(path,stage/'var/jb/usr/lib/cardash-v3/web'/path.name)
- for name in ['README.md','NOTICE.md','LICENSE','TEST-RESULTS.md']:
+ for name in ['README.md','NOTICE.md','LICENSE','TEST-RESULTS.md','SERVICE-DIAGNOSTICS.md']:
   if (SRC/name).exists():shutil.copy2(SRC/name,stage/'var/jb/usr/lib/cardash-v3'/name)
  writeplist(stage/'var/jb/Library/LaunchDaemons/com.cfluid.cardash.v3.plist',{'Label':'com.cfluid.cardash.v3','ProgramArguments':['/var/jb/usr/libexec/cardash-v3-service'],'EnvironmentVariables':{'PATH':'/var/jb/usr/bin:/var/jb/bin:/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1','DISABLE_TWEAKS':'1'},'UserName':'root','ProcessType':'Interactive','RunAtLoad':True,'KeepAlive':{'SuccessfulExit':False},'ThrottleInterval':15,'ExitTimeOut':8,'JetsamProperties':{'MemoryLimit':128,'MemoryLimitInactive':128,'Priority':10},'Umask':0o077,'StandardOutPath':'/var/jb/var/lib/cardash-v3/service-bootstrap.log','StandardErrorPath':'/var/jb/var/lib/cardash-v3/service-bootstrap.log'})
  files={str(p.relative_to(stage)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((stage/'var').rglob('*')) if p.is_file()}

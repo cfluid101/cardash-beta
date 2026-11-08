@@ -1,6 +1,6 @@
 Package: com.cfluid.cardash.v3
 Name: CarDash V3 Native Beta
-Version: 3.0.0~beta.5+https.3.open.1
+Version: 3.0.0~beta.5+https.3.open.1.diag.1
 Architecture: iphoneos-arm64
 Section: Tweaks
 Depends: python3 (>= 3.9), libssl3, uikittools, mobilesubstrate

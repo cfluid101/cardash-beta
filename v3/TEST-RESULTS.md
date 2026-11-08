@@ -1,3 +1,13 @@
+# Service diagnostics candidate 1 — local verification
+
+Package: `3.0.0~beta.5+https.3.open.1.diag.1`.
+
+New host regressions cover actual Unix-socket missing/refused connections, fragmented valid replies, protocol errors, overlong paths and peer closure; read-only `.jbroot` metadata discovery; service-independent export with absent/denied logs, bounded tails, symlink/FIFO rejection, non-UTF8 bytes and live-report status filtering; and installer preservation of existing startup log contents while granting group-read permission only to those logs.
+
+Local verification: 170 Python/native/package tests and 94 JavaScript tests (264 total). The package builds for arm64 with warnings treated as errors and strict signature verification.
+
+These are host/packaging checks, not a reproduced RootHide startup failure or a physical iPhone compatibility test. No phone or original project/saved state was accessed or changed. Browser/video/audio/native adapter logic is unchanged. Earlier validation below describes earlier packages.
+
 # HTTPS3 open-testing revision 1 — validation
 
 Package: `3.0.0~beta.5+https.3.open.1` (November 7, 2026). This revision removes the package firmware dependency and explicit installer, session-helper and backend model/build allowlists. The companion text identifies experimental testing. All bundled arm64 binaries target iOS 16.0, matching the existing rootless crypto link input's minimum; this is not a tested compatibility range. Rootless layout, runtime dependencies, native framework/ABI/instruction guards, and memory-policy readback remain required.

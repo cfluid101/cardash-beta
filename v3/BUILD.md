@@ -45,3 +45,7 @@ HTTPS3 also compiles `v3/native/VideoBudget.mm` into the media-service adapter. 
 ## HTTPS3 open-testing revision 1
 
 The package version is `3.0.0~beta.5+https.3.open.1`. Firmware dependencies and explicit installer/helper/backend model/build allowlists are removed. All bundled Mach-O images and the companion now target iOS 16.0. This matches the existing rootless libcrypto link input’s minimum. It is the binary deployment floor, not a tested compatibility range. Rootless layout, arm64 architecture, runtime packages, memory-policy readback, and exact native identity/instruction/method checks remain required. The existing HTTPS3 release URL is reused; its matching revised source archive records the new commit. The original release tag and the old tested DEB are preserved for rollback. No new physical-device compatibility claim is made.
+
+## Local service diagnostics candidate
+
+Version `3.0.0~beta.5+https.3.open.1.diag.1` links UIKit-independent ServiceClient, ServiceEnvironment and ServiceDiagnostics helpers into the companion. Host tests exercise real temporary Unix sockets and files. The standard rootless runtime/startup/native adapter paths remain unchanged. Offline `.jbroot` discovery is read-only evidence collection, not a RootHide package flavor. See SERVICE-DIAGNOSTICS.md.

@@ -1,4 +1,7 @@
 #import <UIKit/UIKit.h>
+#import "ServiceClient.h"
+#import "ServiceDiagnostics.h"
+#import "ServiceEnvironment.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <ifaddrs.h>
@@ -6,15 +9,7 @@
 #include <unistd.h>
 
 static NSDictionary *Request(NSString *action){
- int fd=socket(AF_UNIX,SOCK_STREAM,0);if(fd<0)return @{ @"ok":@NO,@"error":@"Could not open local service connection."};
- timeval timeout={15,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
- int one=1;setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&one,sizeof(one));sockaddr_un addr={};addr.sun_family=AF_UNIX;strlcpy(addr.sun_path,"/var/jb/var/lib/cardash-v3/control.sock",sizeof(addr.sun_path));
- if(connect(fd,(sockaddr*)&addr,sizeof(addr))){close(fd);return @{ @"ok":@NO,@"error":@"V3 service is unavailable. Reinstall the V3 package and export the installation log if it persists."};}
- NSData *json=[NSJSONSerialization dataWithJSONObject:@{@"action":action} options:0 error:nil];NSMutableData *wire=[json mutableCopy];[wire appendBytes:"\n" length:1];NSUInteger sent=0;
- while(sent<wire.length){ssize_t n=send(fd,(const char *)wire.bytes+sent,wire.length-sent,0);if(n<=0)break;sent+=(NSUInteger)n;}
- NSMutableData *received=[NSMutableData data];char buf[8192];
- while(received.length<5*1024*1024){ssize_t n=recv(fd,buf,sizeof(buf),0);if(n<=0)break;[received appendBytes:buf length:(NSUInteger)n];if(buf[n-1]=='\n')break;}
- close(fd);id value=[NSJSONSerialization JSONObjectWithData:received options:0 error:nil];return [value isKindOfClass:NSDictionary.class]?value:@{@"ok":@NO,@"error":@"The V3 service did not return a complete response. Try again."};
+ return CDV3ServiceRequest(action,@"/var/jb/var/lib/cardash-v3/control.sock");
 }
 static NSString *Addresses(){
  NSMutableOrderedSet *addresses=[NSMutableOrderedSet orderedSet];struct ifaddrs *all=NULL;
@@ -44,7 +39,7 @@ static NSString *Addresses(){
  UIStackView *stack=[[UIStackView alloc]init];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=14;stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
  [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],[scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:24],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-24],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-48]]];
  UILabel *title=[self label:@"CarDash V3" size:32];title.font=[UIFont systemFontOfSize:32 weight:UIFontWeightBold];[stack addArrangedSubview:title];
- [stack addArrangedSubview:[self label:@"Native CarPlay · HTTPS3 open-testing 1" size:17]];
+ [stack addArrangedSubview:[self label:@"Native CarPlay · HTTPS3 service diagnostics 1" size:17]];
  [stack addArrangedSubview:[self label:@"Native CarPlay video, touch and music/navigation audio. Sessions continue while connected. Microphone input, calls and Siri voice input are not supported in this beta." size:15]];
  self.status=[self label:@"Connecting to the V3 service…" size:16];[stack addArrangedSubview:self.status];
  self.prepare=[self button:@"Prepare CarPlay" action:@selector(prepareTapped)];[stack addArrangedSubview:self.prepare];
@@ -104,10 +99,28 @@ static NSString *Addresses(){
 - (void)stopTapped {[self perform:@"stop"];}
 - (void)safariTapped {[UIApplication.sharedApplication openURL:[NSURL URLWithString:@"http://127.0.0.1:8890/"] options:@{} completionHandler:nil];}
 - (void)exportTapped {
- dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{NSDictionary *s=Request(@"report");NSString *report=s[@"report"];
- dispatch_async(dispatch_get_main_queue(),^{if(!report){[self show:s];return;}NSString *folder=@"/var/mobile/Library/Caches/com.cfluid.cardash.v3";[[NSFileManager defaultManager]createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];NSURL *url=[NSURL fileURLWithPath:[folder stringByAppendingPathComponent:@"CarDash-V3-diagnostic.ndjson"]];NSError *error=nil;
- if(![report writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:&error]){self.status.text=error.localizedDescription;return;}
- UIActivityViewController *share=[[UIActivityViewController alloc]initWithActivityItems:@[url] applicationActivities:nil];share.popoverPresentationController.sourceView=self.view;[self presentViewController:share animated:YES completion:nil];});}});
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{
+  NSDictionary *reply=Request(@"report");
+  NSString *version=[NSBundle.mainBundle objectForInfoDictionaryKey:@"CDV3PackageVersion"]?:@"unknown";
+  NSArray *contexts=CDV3DiagnosticContexts(NSBundle.mainBundle.executablePath,version);
+  NSMutableString *report=[NSMutableString string];
+  for(NSDictionary *context in contexts){
+   [report appendString:CDV3DiagnosticReport(reply,context[@"stateDirectory"],context)];
+   if([reply[@"report"] isKindOfClass:NSString.class]&&[reply[@"report"] length])break;
+  }
+  NSURL *cache=[[NSFileManager defaultManager] URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject;
+  NSURL *folder=[cache URLByAppendingPathComponent:@"com.cfluid.cardash.v3" isDirectory:YES];
+  NSError *error=nil;NSURL *url=nil;
+  if(folder&&[[NSFileManager defaultManager] createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&error]){
+   url=[folder URLByAppendingPathComponent:[NSString stringWithFormat:@"CarDash-V3-diagnostic-%@.ndjson",NSUUID.UUID.UUIDString]];
+   if(![report writeToURL:url atomically:YES encoding:NSUTF8StringEncoding error:&error])url=nil;
+  }
+  dispatch_async(dispatch_get_main_queue(),^{
+   if(!url){self.status.text=error.localizedDescription?:@"Could not save the diagnostic report in the app cache.";return;}
+   UIActivityViewController *share=[[UIActivityViewController alloc]initWithActivityItems:@[url] applicationActivities:nil];share.popoverPresentationController.sourceView=self.view;
+   [self presentViewController:share animated:YES completion:nil];
+  });
+ }});
 }
 @end
 @interface Delegate:UIResponder<UIApplicationDelegate>
