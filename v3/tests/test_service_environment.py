@@ -39,6 +39,11 @@ int main(int argc,char **argv){@autoreleasepool{
             self.assertEqual(result[0]['rootSource'],'configured-rootless')
             self.assertEqual(result[0]['packageVersion'],'test-version')
             self.assertTrue(result[0]['pathChecks'])
+            paths=[entry['path'] for entry in result[0]['pathChecks']]
+            for relative in ('Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib',
+                             'Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.plist',
+                             'usr/lib/libsubstrate.dylib','usr/libexec/cardash-v3-session'):
+                self.assertIn('/var/jb/'+relative, paths)
     def test_documented_executable_link_adds_read_only_candidate(self):
         with tempfile.TemporaryDirectory(dir='/tmp') as folder:
             base=Path(folder);app=base/'app';app.mkdir();root=base/'hidden-root';root.mkdir()

@@ -1,36 +1,39 @@
-# HTTPS3 compatibility diagnostics candidate 2
+# HTTPS3 compatibility diagnostics 3
 
-Package version: `3.0.0~beta.5+https.3.open.1.diag.2`.
+Package: `3.0.0~beta.5+https.3.open.1.diag.3`.
 
-This revision adds the missing arm64e slice to the injected media-service adapter while retaining arm64. iOS selects the process-compatible slice automatically. The report already collects the device model, iOS version/build and package version automatically. Framework hooks remain specific to the originally verified images; adding a slice is not an iOS 16.0 framework port. Do not present this local candidate as a universal working beta. See COMPATIBILITY.md.
+**This is a diagnostic prerelease, not a completed iPhone 14 Pro Max/iOS 16.0 CarPlay fix.** It collects missing evidence in one export. Standard rootless Dopamine is the immediate target; RootHide paths and injection remain unported. The ordinary [HTTPS3 beta](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3) stays available separately.
 
-This candidate addresses the missing evidence behind **V3 service is unavailable** when both the companion connection and local Safari preview fail. It does not claim to repair RootHide startup or port the native CarPlay adapters to another firmware.
+## Install and collect once
 
-## What changed
+1. Stop CarPlay and close its browser viewers. Avoid calls/music during installation: the installer restarts V3 and Apple's media service.
+2. Install this diagnostic DEB **over the existing CarDash V3** through Sileo or another dependency-aware package manager. It uses the same package ID, replacing V3 rather than creating a second app. Do not uninstall/reset setup or delete saved state.
+3. Open CarDash V3 on the unlocked phone. Confirm the subtitle says **compatibility diagnostics 3**, then tap **Export diagnostic report**. Allow up to 10 seconds for inspection.
+4. Send the new `.ndjson` report and the Dopamine app's version. The phone model, iOS version and build number are collected automatically. Review the report before sharing; export does not upload it.
 
-- The companion preserves the actual socket error and stage, distinguishes absent/refused connections and rejects overlong socket paths rather than truncating them.
-- **Export diagnostic report** works without the service: it always creates a report with device/build/package information, configured socket path, file metadata and any readable startup logs.
-- The exporter inspects the documented `.jbroot` symbolic link beside its own executable as an additional diagnostic candidate. It does not scan containers, change the active socket path, launch another service or migrate state.
-- Offline log reads are limited to the final 64 KiB of V3's `installation.log` and `service-bootstrap.log`; unreadable/missing files are recorded explicitly. Symlink/nonregular log files are rejected. Identity/key/preferences files are never opened by the offline exporter.
-- The installer preserves and sets only those two startup logs to `root:mobile`, mode `0640`; identity and other receiver files remain private. The companion includes RootHide's documented storage access entitlements for this read-only inspection. Their effect still requires verification in the tester's environment.
-- Live exports now include a sanitized status snapshot and only complete bounded NDJSON records.
+No Tesla trip, USB connection, APK import, Prepare CarPlay, or repeated Start attempts are needed for collection. The V3 service starts automatically on installation, but installation/export do not request a native CarPlay session. If installation fails or the companion cannot open, send the package manager's installation output instead.
 
-## Tester collection
+## Evidence added
 
-Use this only as a diagnostic candidate. It retains the current **standard rootless package layout** and actual runtime requirements; it is not a dedicated RootHide build. Record the exact jailbreak name/version and whether/how the prior DEB was converted before choosing the installation method. Installation still restarts V3 and the media service; it does not start CarPlay or delete saved identity/settings.
+- The injected adapter contains both arm64 and arm64e slices. Standalone executables remain arm64. This fixes the previous architecture packaging gap; it does not port private framework implementations.
+- A bounded, versioned notification inventory reports the adapter CPU type/subtype and **observed** APTransport, MediaExperience and AirPlaySender UUIDs inside `mediaserverd`. PID/sequence validation rejects missing, stale, partial or changing publications. Missing frameworks and publication errors are explicit; a missing inventory does not prove why injection failed.
+- Export independently runs the session helper's read-only `--inspect` mode, even when the media adapter prevents Start. It reports CarKit/carkitd identities, supported-identity comparisons and required method ABIs. It does not construct a CarKit client/host/status object, contact an accessory, or request/cancel a session. Internal/external timeouts and output limits bound collection.
+- Readiness failures retain their observed PID and status code. Reports no longer substitute a supported framework UUID for an observed one.
+- The companion records model/build/package, socket errors and metadata for service, injection dylib/filter and hook-provider paths. Live reports preserve complete bounded NDJSON records.
+- If the service is unavailable, offline export records context and readable tails of V3's two startup logs. The `.jbroot` link beside this app is inspected only as evidence; no paths are migrated. Missing/denied logs remain useful evidence.
 
-Once the candidate companion can open, tap **Export diagnostic report** while the service error is visible, save/share the resulting `.ndjson`, and include the exact jailbreak version and any conversion method. No Tesla drive, USB connection, APK re-import or repeated Start attempts are required to collect this report. Missing/denied logs are themselves useful diagnostic evidence.
+The exporter does not read saved accessory keys. The package has no saved identity/preferences payload. Installation preserves existing V3 identity/settings and original CarDash/V2 files. Offline log reads reject symlinks/nonregular files and are capped at 64 KiB per log. Helper output is capped at 64 KiB per pipe; final exports are bounded.
 
-The app export is not an automatic upload. Review it before sending. This candidate is built and tested locally; no tester phone or RootHide runtime has been tested. The current published release has not been replaced.
+## What remains for native operation
 
-## RootHide startup investigation
+Verify and adapt all four integrations for the tester's actual framework family: APTransport transport, MediaExperience device-audio routing, AirPlaySender bandwidth control, and CarKit/carkitd request/completion handling. Unknown images retain their protective identity/instruction/ABI checks. A compile or accepted installation cannot establish arm64e injection, pointer authentication, native video or locked switching.
 
-Official documentation distinguishes native paths resolved through `jbroot()` from RootHide bootstrap Python/shell paths. A correct port must adapt the launcher, launchd job, companion IPC, Python paths and native dependency paths together. Replacing `/var/jb` everywhere with one physical prefix can double-translate paths. This candidate only records evidence; it does not make that speculative startup change.
+The new report tells us which checks were reached and provides exact identities for targeted analysis. A subsequent compatibility build still needs physical-phone validation. See [COMPATIBILITY.md](COMPATIBILITY.md) and [TEST-RESULTS.md](TEST-RESULTS.md).
 
-Sources:
-- https://github.com/roothide/Developer/blob/main/roothide.md
-- https://github.com/roothide/Developer/blob/main/interface.md
-- https://github.com/roothide/Developer/blob/main/entitlements.md
-- https://github.com/roothide/Developer/blob/main/vroot.md
+## Rollback without resetting setup
 
-Native transport, audio, bandwidth and CarKit ABI checks remain separate later requirements. An unavailable service does not establish that any of those checks were reached.
+Stop CarPlay, then use the package manager to install/downgrade to the [previous open-testing DEB](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.5-https.3/com.cfluid.cardash.v3_3.0.0-beta.5-https.3_iphoneos-arm64.deb). Retain `/var/jb/var/lib/cardash-v3`; do not delete/reinitialize it. This restores previous software, not a proven working session on the tester's phone.
+
+Previous DEB SHA-256: `457bfd78326da6ee15c8268d2e87a3299f58f8e878d8fe23caf39dde628b10b3`.
+
+RootHide remains a separate adaptation: launcher, launchd, Python/native dependencies, companion IPC and injection must agree on its layout. Its [developer documentation](https://github.com/roothide/Developer/blob/main/roothide.md) distinguishes those environments; inspecting `.jbroot` alone does not implement support.

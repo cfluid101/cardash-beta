@@ -57,8 +57,8 @@ static NSDictionary *Status(id value) {
     NSDictionary *nested = @{
         @"transport": @[@"ready", @"pid", @"imageUUID", @"error", @"code"],
         @"network": @[@"ready", @"url", @"error"],
-        @"videoBudget": @[@"ready", @"pid", @"error", @"targetBps", @"measuredBps"],
-        @"audioRouting": @[@"ready", @"pid", @"error", @"deviceOutputActive", @"leaseValid", @"ownHost"],
+        @"videoBudget": @[@"ready", @"pid", @"code", @"error", @"targetBps", @"measuredBps", @"requestedBps", @"nativeBps", @"appliedBps"],
+        @"audioRouting": @[@"ready", @"pid", @"code", @"error", @"deviceOutputActive", @"leaseValid", @"ownHost"],
         @"native": @[@"present", @"authenticated", @"activated", @"timing_requests", @"timing_replies"]
     };
     for (NSString *name in nested) {

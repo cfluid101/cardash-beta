@@ -122,11 +122,13 @@ class ServiceDiagnosticsTest(unittest.TestCase):
             reply = {'ok': True, 'report': '{"event":"listening","port":8890}\n',
                      'status': {'version': 'candidate', 'active': False, 'session': 'session-secret',
                                 'token': 'bearer-secret', 'identityReady': True,
-                                'transport': {'ready': False, 'error': 'adapter unavailable',
+                                'transport': {'ready': False, 'error': 'adapter unavailable', 'pid':123,'code':2,
                                               'privateKey': 'nested-secret'}}}
             rows, text = self.report(folder, reply=reply)
             self.assertEqual(rows[0]['report_scope'], 'service_report')
             self.assertEqual(rows[0]['status']['transport']['ready'], False)
+            self.assertEqual(rows[0]['status']['transport']['code'],2)
+            self.assertEqual(rows[0]['status']['transport']['pid'],123)
             self.assertEqual(rows[1], {'event': 'listening', 'port': 8890})
             for secret in ('session-secret', 'bearer-secret', 'nested-secret', 'fallback-should-not-be-read'):
                 self.assertNotIn(secret, text)

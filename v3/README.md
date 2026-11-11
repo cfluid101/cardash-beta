@@ -1,4 +1,4 @@
-> **Local service-diagnostics candidate 1.** See [SERVICE-DIAGNOSTICS.md](SERVICE-DIAGNOSTICS.md). This adds offline export and connection-error evidence; it does not establish RootHide service or native-session compatibility. The public HTTPS3 release is unchanged.
+> **Compatibility diagnostics 3 — diagnostic prerelease.** For this package, follow [SERVICE-DIAGNOSTICS.md](SERVICE-DIAGNOSTICS.md) and export a report. It includes arm64/arm64e injection code and read-only framework inspection, but is not a completed iPhone 14 Pro Max/iOS 16.0 port. The normal HTTPS3 release remains separate. The connection instructions and device results below describe the earlier streaming beta.
 
 # CarDash V3 Beta 5 — HTTPS3
 

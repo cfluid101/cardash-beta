@@ -1,3 +1,15 @@
+# Compatibility diagnostics 3 — host and package verification
+
+Package: `3.0.0~beta.5+https.3.open.1.diag.3` (November 10, 2026). This is a diagnostic prerelease, not a completed iPhone 14 Pro Max/iOS 16.0 native CarPlay port.
+
+**342 automated cases passed:** 191 V3 Python/native/package tests, 94 V3 JavaScript tests, 21 reference-receiver JavaScript tests, one reference session-lock test, and 35 legacy diagnostic tests. The V3 run used the host crypto, audio and VideoToolbox bridges; no cases were skipped. The native inventory harness also passed AddressSanitizer and UndefinedBehaviorSanitizer; its runtime compiled for arm64 and arm64e with warnings treated as errors.
+
+New coverage includes malformed Mach-O load commands and UUIDs; notification registration/publication failures; missing/odd/changing snapshots and stale publisher rejection; read-only export despite failed startup; bounded helper output, timeout, cancellation/reaping and concurrent-export control; and preservation of observed failure status in the app export. Real Objective-C fixtures trap private initializers/session methods while metadata is inspected. A deliberately stalled CarKit loader terminates at the helper's eight-second deadline. The app's offline exporter and startup-log preservation regressions also pass.
+
+The DEB includes both arm64 and arm64e adapter slices and an iOS 16.0 deployment floor. Package tests inspect the actual archive and both slices, and verify signatures. REA independently inspected the extracted arm64e slice and reported its Mach-O architecture/load commands; this is static binary evidence, not proof of device injection. New collection runs only on image changes/export, not on frame/audio/input paths. Existing hook implementations and their protective identity/instruction checks are unchanged.
+
+No physical phone was contacted, restarted or installed on during this revision. The original project and saved state remain untouched. New on-device notification publication, CarKit inspection under the tester's jailbreak, and actual native-session compatibility remain unverified. The normal HTTPS3 release is preserved separately. See SERVICE-DIAGNOSTICS.md for one-export tester collection and rollback; historical device results below do not validate this candidate.
+
 # Architecture/compatibility candidate 2 — local verification
 
 Package: `3.0.0~beta.5+https.3.open.1.diag.2` (local development candidate, November 10, 2026).

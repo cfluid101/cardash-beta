@@ -56,31 +56,37 @@ class AudioLease:
 
 
 def audio_route_status(probe=None,alive=None,state_probe=None):
+    result={'ready':False}
     try:
         value=(probe or (lambda:notification_state(b'com.cfluid.cardash.v3.audio.ready')))()
         pid,code=value>>8,value&255
+        result.update(pid=pid,code=code)
         if pid<=1 or code!=1:raise ValueError('audio routing adapter unavailable (status '+str(code)+'); reinstall this beta or select Browser audio')
         (alive or (lambda pid:os.kill(pid,0)))(pid)
         try:
             state=(state_probe or (lambda:notification_state(b'com.cfluid.cardash.v3.audio.state')))()
             bits=state&255 if state>>16==pid else 0
         except (OSError,AttributeError):bits=0
-        return {'ready':True,'pid':pid,'error':'','deviceOutputActive':bool(bits&4),'leaseValid':bool(bits&8),'ownHost':bool(bits&2)}
-    except (OSError,ValueError,AttributeError) as error:return {'ready':False,'error':str(error)}
+        result.update(ready=True,error='',deviceOutputActive=bool(bits&4),leaseValid=bool(bits&8),ownHost=bool(bits&2))
+    except (OSError,ValueError,AttributeError) as error:result['error']=str(error)
+    return result
 
 
 def transport_status(state=None, alive=None, probe=None):
     def running(pid):
         os.kill(pid,0)
+    result={'ready':False}
     try:
         value=(probe or notification_state)()
         pid,code=value>>8,value&255
+        result.update(pid=pid,code=code)
         if pid<=1:raise ValueError('adapter not loaded; reinstall this beta to reload the media service')
         (alive or running)(pid)
         if code!=1:raise ValueError('adapter failed its exact-firmware or hook-provider check; export diagnostics')
-        return {'ready':True,'pid':pid,'imageUUID':'BCC474F5-2745-3652-995F-A06F650F76FC','error':''}
+        result.update(ready=True,error='')
     except (OSError,ValueError,AttributeError) as error:
-        return {'ready':False,'error':'USB-free transport is unavailable: '+str(error)}
+        result['error']='USB-free transport is unavailable: '+str(error)
+    return result
 
 
 def startup_failure(active, frames, started, now, native_error=''):

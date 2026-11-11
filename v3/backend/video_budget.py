@@ -31,10 +31,13 @@ class VideoBudgetLease(AudioLease):
         self.write(b'com.cfluid.cardash.v3.video.lease',0)
 
 def budget_status():
+    result={'ready':False}
     try:
         value=notification_state(b'com.cfluid.cardash.v3.video.ready')
+        result.update(pid=value>>8,code=value&255)
         state=notification_state(b'com.cfluid.cardash.v3.video.state')
         observed=notification_state(b'com.cfluid.cardash.v3.video.observed')
-        return {'ready':value&255==1,'pid':value>>8,'requestedBps':state&0xffffffff,
+        return {'ready':value&255==1,'pid':value>>8,'code':value&255,'requestedBps':state&0xffffffff,
                 'nativeBps':observed>>32,'appliedBps':observed&0xffffffff}
-    except (OSError,AttributeError):return {'ready':False}
+    except (OSError,AttributeError) as error:
+        result['error']=str(error);return result

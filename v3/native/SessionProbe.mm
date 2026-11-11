@@ -1,6 +1,7 @@
 #import "Common.h"
 #import "NativeIdentity.h"
 #import "HostPayload.h"
+#import "SessionInspection.h"
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <signal.h>
@@ -21,6 +22,11 @@ static void hardStop(int s){(void)s;_exit(124);}
 static void stop(int s){(void)s;stopped=1;}
 static void pump(double s){double end=CDClock()+s;while(CDClock()<end)CFRunLoopRunInMode(kCFRunLoopDefaultMode,.03,false);}
 int main(int argc,char **argv){@autoreleasepool{
+ if(argc==2&&!strcmp(argv[1],"--inspect")){
+  signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(8);
+  NSDictionary *inspection=CDV3InspectCarKitAtPath(@"/System/Library/PrivateFrameworks/CarKit.framework/CarKit");
+  CDEmit(@"native_inspection",inspection);alarm(0);return [inspection[@"complete"] boolValue]?0:10;
+ }
  if(argc!=4)return 2;
  int port=atoi(argv[1]),duration=atoi(argv[3]);NSString *key=@(argv[2]);
  if(port<1024||port>65535||duration<0||key.length!=64||[key rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location!=NSNotFound)return 2;

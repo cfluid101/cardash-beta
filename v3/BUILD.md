@@ -55,3 +55,7 @@ The diagnostics candidates link UIKit-independent ServiceClient, ServiceEnvironm
 Version `3.0.0~beta.5+https.3.open.1.diag.2` builds the injected media-service library with both arm64 and arm64e slices. Standalone processes remain arm64. The package test inspects the actual DEB payload with lipo, checks both slices' iOS deployment floor and verifies signatures across all architectures. Installer model/firmware allowlists remain absent.
 
 The companion automatically includes model, iOS version/build and package version in an exported diagnostic report. Users do not select an architecture or copy build numbers manually. Exact framework identity/instruction checks remain unchanged; this corrects an architecture packaging gap and does not establish working native CarPlay on iOS 16.0/arm64e. See COMPATIBILITY.md for the remaining work.
+
+## Compatibility diagnostics 3
+
+The universal adapter also compiles `v3/native/NativeInventory.mm`, a read-only media-framework identity publisher. The standalone session helper includes `v3/native/SessionInspection.mm` and accepts `--inspect` before normal session argument handling. Export invokes that bounded mode independently of startup guards. Neither collector changes native hook implementations or requests a session. The build still targets iOS 16.0, with warnings treated as errors; the app's package label and build number identify diagnostics 3. See SERVICE-DIAGNOSTICS.md for collection and rollback.

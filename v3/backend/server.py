@@ -34,11 +34,12 @@ from network import TeslaNetwork,allowed_peer
 from transport import transport_status,startup_failure,AudioLease,audio_route_status
 from video_budget import VideoBudget, VideoBudgetLease, budget_status
 from browser_access import BrowserAccess,BrowserAccessError
+from compatibility import inventory_status, inspect_session_helper
 
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.5-https.3-open.1-diag.2'
+VERSION='3.0.0-beta.5-https.3-open.1-diag.3'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
 
@@ -77,6 +78,7 @@ class Receiver:
         if self.identity_path.exists():self.identity=json.loads(self.identity_path.read_text())
         else:self.identity={'id':str(uuid.uuid4()),'seed':os.urandom(32).hex(),'peers':{}};self.save_identity()
         self.token=os.urandom(32).hex();self.browser_access=BrowserAccess();self.lock=asyncio.Lock();self.command_lock=asyncio.Lock()
+        self.inspection_lock=asyncio.Lock()
         self.images=None;self.image_lock=asyncio.Lock();self.image_waiters=0;self.image_epoch=0;self.image_close_tasks=set();self.image_error='';self.image_sequence=0
         self.helper=None;self.active=False;self.started=0;self.last_heartbeat=0;self.had_viewer=False
         self.error='';self.native_error='';self.native={};self.frames=0;self.codec=None;self.muxer=None;self.pending=None
@@ -649,6 +651,18 @@ class Receiver:
                         offset=max(0,p.stat().st_size-2*1024*1024);f.seek(offset);content=f.read(2*1024*1024).decode(errors='replace')
                     if offset and name.endswith('.ndjson'):content=content.partition('\n')[2]
                     text+=content if name.endswith('.ndjson') else json.dumps({'event':'supporting_log','file':name,'text':content})+'\n'
+            # Export is the only entry point for read-only native inspection.
+            # Inspect independently of session startup gates so a missing media
+            # adapter does not hide CarKit incompatibilities from the report.
+            records=[inventory_status()]
+            if self.inspection_lock.locked():
+                records.append({'event':'native_session_inspection','complete':False,
+                                'error':'Another inspection is in progress; export again when it finishes'})
+            else:
+                async with self.inspection_lock:
+                    records.append(await inspect_session_helper(self.args.helper))
+            if text and not text.endswith('\n'):text+='\n'
+            text+=''.join(json.dumps(record)+'\n' for record in records)
             if len(text)>4*1024*1024:text=text[-4*1024*1024:].partition('\n')[2]
             return {'report':text,'status':self.status()}
         raise ValueError('Unknown action')
