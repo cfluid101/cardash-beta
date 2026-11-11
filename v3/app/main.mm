@@ -39,19 +39,19 @@ static NSString *Addresses(){
  UIStackView *stack=[[UIStackView alloc]init];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=14;stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
  [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],[scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:24],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-24],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-48]]];
  UILabel *title=[self label:@"CarDash V3" size:32];title.font=[UIFont systemFontOfSize:32 weight:UIFontWeightBold];[stack addArrangedSubview:title];
- [stack addArrangedSubview:[self label:@"Native CarPlay · HTTPS3 compatibility diagnostics 3" size:17]];
+ [stack addArrangedSubview:[self label:@"Native CarPlay · HTTPS3 compatibility beta 1" size:17]];
  [stack addArrangedSubview:[self label:@"Native CarPlay video, touch and music/navigation audio. Sessions continue while connected. Microphone input, calls and Siri voice input are not supported in this beta." size:15]];
  self.status=[self label:@"Connecting to the V3 service…" size:16];[stack addArrangedSubview:self.status];
  self.prepare=[self button:@"Prepare CarPlay" action:@selector(prepareTapped)];[stack addArrangedSubview:self.prepare];
  [stack addArrangedSubview:[self button:@"Import downloaded DiPlay APK" action:@selector(importTapped)]];
  self.start=[self button:@"Start CarPlay" action:@selector(startTapped)];[stack addArrangedSubview:self.start];
  self.stop=[self button:@"Stop CarPlay" action:@selector(stopTapped)];[stack addArrangedSubview:self.stop];
- [stack addArrangedSubview:[self label:@"Connect the Tesla to Personal Hotspot, then open its address below and tap Start in the browser:" size:15]];
+ [stack addArrangedSubview:[self label:@"Connect the Tesla to Personal Hotspot. In its browser, open https://cfluid101.github.io/cardash-beta/option1/?v=https3 and enter the iPhone address below. Tap Connect, allow local network access, then Start." size:15]];
  self.addresses=[self label:@"Checking Tesla address…" size:16];self.addresses.textColor=[UIColor colorWithRed:.45 green:.78 blue:1 alpha:1];[stack addArrangedSubview:self.addresses];
  [stack addArrangedSubview:[self button:@"Open local preview in Safari" action:@selector(safariTapped)]];
  [stack addArrangedSubview:[self button:@"Export diagnostic report" action:@selector(exportTapped)]];
  [stack addArrangedSubview:[self label:@"First setup downloads and checks the public DiPlay 0.2.22 experimental accessory identity (about 18 MB). It is not Apple certification. No setup code is required. Use a trusted hotspot: connected devices can control the preview." size:13]];
- [stack addArrangedSubview:[self label:@"Keep the phone unlocked for your first test. This experimental build permits other rootless arm64 models and iOS versions to install. Native operation has been verified only on iPhone 8 Plus, iOS 16.6 build 20G75. Incompatible native adapters will report unavailable; export diagnostics if a session cannot start. Installed CarBridge may affect which apps appear. Your original CarDash app and settings remain separate. Reports stay on this phone until you choose to share them; video is not recorded by this release." size:13]];
+ [stack addArrangedSubview:[self label:@"Keep the phone unlocked for your first test. This build adds an experimental iOS 16.0 compatibility path; it still needs device confirmation. Earlier native operation was verified on iPhone 8 Plus, iOS 16.6. Export a diagnostic report after your trial whether it works or fails. Installed CarBridge may affect which apps appear. Your original CarDash app and settings remain separate. Reports stay on this phone until you choose to share them; video is not recorded by this release." size:13]];
  self.timer=[NSTimer scheduledTimerWithTimeInterval:2 target:self selector:@selector(refresh) userInfo:nil repeats:YES];[self refresh];
 }
 - (void)show:(NSDictionary *)s {
@@ -66,7 +66,7 @@ static NSString *Addresses(){
  else self.status.text=ready?@"Setup complete. Tap Start in the Tesla browser to launch CarPlay. Audio stays on the phone or Bluetooth by default.":@"Tap Prepare CarPlay once to complete setup.";
  NSDictionary *network=s[@"network"];
  NSString *tesla=[network[@"ready"] boolValue]?network[@"url"]:[NSString stringWithFormat:@"Tesla address unavailable: %@",network[@"error"]?:@"checking…"];
- self.addresses.text=[NSString stringWithFormat:@"Tesla browser:\n%@\n\nOther browsers on this network:\n%@",tesla,Addresses()];
+ self.addresses.text=[NSString stringWithFormat:@"iPhone address for the HTTPS3 page:\n%@\n\nOther local addresses:\n%@",tesla,Addresses()];
 }
 - (void)perform:(NSString *)action {
  if(self.polling)return;self.polling=YES;

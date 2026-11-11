@@ -55,9 +55,9 @@ static NSDictionary *Status(id value) {
         @"sourceWidth", @"sourceHeight", @"displayVerified"]);
     if (![value isKindOfClass:NSDictionary.class]) return result;
     NSDictionary *nested = @{
-        @"transport": @[@"ready", @"pid", @"imageUUID", @"error", @"code"],
+        @"transport": @[@"ready", @"pid", @"imageUUID", @"error", @"code", @"reasonCode", @"reason"],
         @"network": @[@"ready", @"url", @"error"],
-        @"videoBudget": @[@"ready", @"pid", @"code", @"error", @"targetBps", @"measuredBps", @"requestedBps", @"nativeBps", @"appliedBps"],
+        @"videoBudget": @[@"ready", @"pid", @"code", @"error", @"reasonCode", @"reason", @"targetBps", @"measuredBps", @"requestedBps", @"nativeBps", @"appliedBps"],
         @"audioRouting": @[@"ready", @"pid", @"code", @"error", @"deviceOutputActive", @"leaseValid", @"ownHost"],
         @"native": @[@"present", @"authenticated", @"activated", @"timing_requests", @"timing_replies"]
     };

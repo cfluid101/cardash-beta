@@ -2,6 +2,7 @@
 #import "NativeIdentity.h"
 #import "HostPayload.h"
 #import "SessionInspection.h"
+#import "HostProfile.h"
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <signal.h>
@@ -35,15 +36,24 @@ int main(int argc,char **argv){@autoreleasepool{
  CDEmit(@"experimental_target",@{@"machine":CDSystem("hw.machine")?:@"",@"build":CDSystem("kern.osversion")?:@""});
  void *h=dlopen("/System/Library/PrivateFrameworks/CarKit.framework/CarKit",RTLD_NOW|RTLD_LOCAL);if(!h)return 4;
  Class hc=NSClassFromString(@"CARSessionRequestHost"),cc=NSClassFromString(@"CARSessionRequestClient"),sc=NSClassFromString(@"CARSessionStatus");
- NSString *selector=@"initWithDisplayName:wiredIPv6Addresses:wirelessIPv6Addresses:port:carplayWiFiUUID:deviceIdentifier:publicKey:sourceVersion:wiredCarPlaySimulator:";
- if(!CDMethodMatches(hc,selector,"@",@[@"@",@"@",@"@",@"q",@"@",@"@",@"@",@"@",@"B"],NO,YES)||!CDMethodMatches(sc,@"currentSession","@",@[],NO,YES)||!CDMethodMatches(cc,@"cancelRequests","v",@[],NO,YES))return 5;
- NSDictionary *identity=CDCarKitCompletionIdentity(cc);CDEmit(@"completion_identity",identity);if(![identity[@"typed_completion_enabled"] boolValue])return 6;
+ NSDictionary *legacyIdentity=CDCarKitCompletionIdentity(cc);
+ NSDictionary *profile=CDV3InspectHostProfile(hc,cc,sc,legacyIdentity);
+ CDEmit(@"host_profile",profile);
+ if(![profile[@"normal_mode_method_checks_passed"] boolValue])return 5;
+ NSDictionary *identity=profile[@"completion_identity"];CDEmit(@"completion_identity",identity);if(![identity[@"typed_completion_enabled"] boolValue])return 6;
  id observer=[[sc alloc] init];pump(1);if([observer currentSession]){CDEmit(@"existing_session_withheld",@{});return 7;}
  Timing timing;if(!timing.start()){CDEmit(@"timing_bind_failed",@{});return 9;}
  id client=[[cc alloc] init];
  @try{
- id host=[[hc alloc] initWithDisplayName:@"CarDash V3" wiredIPv6Addresses:@[@"::1"] wirelessIPv6Addresses:@[] port:port carplayWiFiUUID:nil deviceIdentifier:@"02:43:44:4c:41:42" publicKey:key sourceVersion:@"509.0" wiredCarPlaySimulator:YES];
- NSError *error=nil;if(!CDSecureHostRoundTrip(host,&error)){CDEmit(@"archive_failed",@{@"error":error.description?:@""});return 8;}
+ NSError *error=nil;id host=nil;
+ if(CDV3UsesDictionaryHostProfile(profile)){
+  host=CDV3CreateDictionaryHost(hc,port,key,&error);
+  if(!host){CDEmit(@"archive_failed",@{@"error":error.description?:@"",@"stage":@"dictionary_host_preflight"});return 8;}
+  CDEmit(@"host_secure_coding",@{@"matches":@YES,@"live_fields_match":@YES,@"public_key_type":@"NSString",@"profile":profile[@"selected_profile"]});
+ }else{
+  host=[[hc alloc] initWithDisplayName:@"CarDash V3" wiredIPv6Addresses:@[@"::1"] wirelessIPv6Addresses:@[] port:port carplayWiFiUUID:nil deviceIdentifier:@"02:43:44:4c:41:42" publicKey:key sourceVersion:@"509.0" wiredCarPlaySimulator:YES];
+  if(!CDSecureHostRoundTrip(host,&error)){CDEmit(@"archive_failed",@{@"error":error.description?:@""});return 8;}
+ }
  CDEmit(@"request_started",@{@"port":@(port),@"duration":@(duration),@"pid":@(getpid())});
  [client startSessionWithHost:host completion:^(BOOL success,NSError *error){CDEmit(@"native_completion",@{@"success":@(success),@"error":error.description?:@""});}];
  double start=CDClock(),last=0,lease=start;while(!stopped&&getppid()==parent&&(!duration||CDClock()-start<duration)){@autoreleasepool{

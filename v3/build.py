@@ -2,7 +2,7 @@
 """Build an isolated V3 rootless DEB. This script never deploys or connects."""
 from pathlib import Path
 import subprocess,plistlib,hashlib,json,shutil,io,tarfile,os,importlib.util,re
-ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.5+https.3.open.1.diag.3'
+ROOT=Path(__file__).resolve().parents[1];SRC=ROOT/'v3';OUT=ROOT/'build/v3/release';VERSION='3.0.0~beta.5+https.3.open.2'
 def run(args):subprocess.run([str(x) for x in args],check=True,cwd=ROOT)
 def writeplist(path,value):path.write_bytes(plistlib.dumps(value))
 def source_commit():
@@ -14,7 +14,7 @@ def sign(path,ent=None):
 def main():
  OUT.mkdir(parents=True,exist_ok=True);sdk=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],text=True).strip()
  flags=['xcrun','--sdk','iphoneos','clang++','-arch','arm64','-miphoneos-version-min=16.0','-isysroot',sdk,'-x','objective-c++','-std=c++17','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations']
- helper=OUT/'cardash-v3-session';run([*flags,'-I',ROOT/'src',SRC/'native/SessionProbe.mm',SRC/'native/SessionInspection.mm',ROOT/'src/Common.m',ROOT/'src/NativeIdentity.mm',ROOT/'src/HostPayload.mm','-framework','Foundation','-o',helper])
+ helper=OUT/'cardash-v3-session';run([*flags,'-I',ROOT/'src',SRC/'native/SessionProbe.mm',SRC/'native/SessionInspection.mm',SRC/'native/HostProfile.mm',ROOT/'src/Common.m',ROOT/'src/NativeIdentity.mm',ROOT/'src/HostPayload.mm','-framework','Foundation','-o',helper])
  ent=OUT/'session-entitlements.plist';writeplist(ent,{'platform-application':True,'com.apple.private.security.no-sandbox':True,'com.apple.private.carkit.sessionRequest':True,'com.apple.private.carkit':True});sign(helper,ent)
  download=OUT/'cardash-v3-download';run([*flags,SRC/'native/Download.mm','-framework','Foundation','-o',download]);basic=OUT/'basic-entitlements.plist';writeplist(basic,{'platform-application':True,'com.apple.private.security.no-sandbox':True});sign(download,basic)
  service=OUT/'cardash-v3-service';run(['xcrun','--sdk','iphoneos','clang','-arch','arm64','-isysroot',sdk,'-miphoneos-version-min=16.0','-Wall','-Wextra','-Werror',SRC/'native/Service.c','-o',service]);sign(service,basic)
@@ -29,7 +29,7 @@ def main():
  # standalone app, Python process and helpers can continue to use arm64.
  loopback=OUT/'CarDashV3Loopback.dylib';run([*flags,'-arch','arm64e',SRC/'native/Loopback.mm',SRC/'native/AudioRoute.mm',SRC/'native/VideoBudget.mm',SRC/'native/NativeInventory.mm','-dynamiclib','-framework','Foundation','-install_name','/var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib','-o',loopback]);sign(loopback)
  app=OUT/'CarDashV3.app';app.mkdir(exist_ok=True);run([*flags,SRC/'app/main.mm',SRC/'app/ServiceClient.mm',SRC/'app/ServiceDiagnostics.mm',SRC/'app/ServiceEnvironment.mm','-framework','Foundation','-framework','UIKit','-o',app/'CarDashV3'])
- writeplist(app/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.v3.host','CFBundleExecutable':'CarDashV3','CFBundleName':'CarDash V3','CFBundleDisplayName':'CarDash V3','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'3.3','CDV3PackageVersion':VERSION,'CFBundleShortVersionString':'3.0.0','MinimumOSVersion':'16.0','CFBundleSupportedPlatforms':['iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
+ writeplist(app/'Info.plist',{'CFBundleIdentifier':'com.cfluid.cardash.v3.host','CFBundleExecutable':'CarDashV3','CFBundleName':'CarDash V3','CFBundleDisplayName':'CarDash V3','CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0','CFBundleVersion':'3.4','CDV3PackageVersion':VERSION,'CFBundleShortVersionString':'3.0.0','MinimumOSVersion':'16.0','CFBundleSupportedPlatforms':['iPhoneOS'],'LSRequiresIPhoneOS':True,'UIDeviceFamily':[1],'UILaunchScreen':{},'UIUserInterfaceStyle':'Dark','UISupportedInterfaceOrientations':['UIInterfaceOrientationPortrait'],'CFBundleIconFiles':['AppIcon'],'CFBundleIcons':{'CFBundlePrimaryIcon':{'CFBundleIconFiles':['AppIcon']}}})
  spec=importlib.util.spec_from_file_location('diagnostic_build',ROOT/'build.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
  module.icon(app/'AppIcon@2x.png',120);module.icon(app/'AppIcon@3x.png',180)
  appent=OUT/'app-entitlements.plist';writeplist(appent,{'application-identifier':'com.cfluid.cardash.v3.host','platform-application':True,'com.apple.private.security.no-sandbox':True,'com.apple.private.security.container-required':False,'com.apple.private.security.storage.AppBundles':True,'com.apple.private.security.storage.AppDataContainers':True});sign(app,appent)
@@ -46,11 +46,11 @@ def main():
  for library in [crypto,audio,video,network]:shutil.copy2(library,stage/'var/jb/usr/lib/cardash-v3/backend'/library.name)
  for path in (SRC/'web').iterdir():
   if path.is_file():shutil.copy2(path,stage/'var/jb/usr/lib/cardash-v3/web'/path.name)
- for name in ['README.md','NOTICE.md','LICENSE','TEST-RESULTS.md','SERVICE-DIAGNOSTICS.md','COMPATIBILITY.md']:
+ for name in ['README.md','NOTICE.md','LICENSE','TEST-RESULTS.md','SERVICE-DIAGNOSTICS.md','COMPATIBILITY.md','COMPATIBILITY-BETA.md','NATIVE-PROFILES.md','VIDEO-BUDGET-DIAGNOSTICS.md','TRANSPORT-DIAGNOSTICS.md']:
   if (SRC/name).exists():shutil.copy2(SRC/name,stage/'var/jb/usr/lib/cardash-v3'/name)
  writeplist(stage/'var/jb/Library/LaunchDaemons/com.cfluid.cardash.v3.plist',{'Label':'com.cfluid.cardash.v3','ProgramArguments':['/var/jb/usr/libexec/cardash-v3-service'],'EnvironmentVariables':{'PATH':'/var/jb/usr/bin:/var/jb/bin:/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1','DISABLE_TWEAKS':'1'},'UserName':'root','ProcessType':'Interactive','RunAtLoad':True,'KeepAlive':{'SuccessfulExit':False},'ThrottleInterval':15,'ExitTimeOut':8,'JetsamProperties':{'MemoryLimit':128,'MemoryLimitInactive':128,'Priority':10},'Umask':0o077,'StandardOutPath':'/var/jb/var/lib/cardash-v3/service-bootstrap.log','StandardErrorPath':'/var/jb/var/lib/cardash-v3/service-bootstrap.log'})
  files={str(p.relative_to(stage)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((stage/'var').rglob('*')) if p.is_file()}
- manifest={'version':VERSION,'target':'experimental rootless arm64; no installer model/firmware allowlist','adapter_architectures':['arm64','arm64e'],'validated_native_target':'iPhone10,2 / iOS16.6 / 20G75 / rootless','native_identity_checks_required':True,'source_commit':source_commit(),'files':files,'audio_supported':True,'session_limit_seconds':None,'private_credentials_included':False}
+ manifest={'version':VERSION,'target':'experimental rootless arm64; no installer model/firmware allowlist','adapter_architectures':['arm64','arm64e'],'validated_native_target':'iPhone10,2 / iOS16.6 / 20G75 / rootless','experimental_native_target':'iPhone15,3 / iOS16.0 / 20A357 / standard Dopamine rootless','experimental_target_device_tested':False,'native_profile_selection':'loaded implementation UUID, architecture, method ownership/types and instruction fingerprints; OS/model strings are context only','native_identity_checks_required':True,'source_commit':source_commit(),'files':files,'audio_supported':True,'session_limit_seconds':None,'private_credentials_included':False}
  (stage/'var/jb/usr/lib/cardash-v3/manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
  def tar(base,paths):
   out=io.BytesIO()

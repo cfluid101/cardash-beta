@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Exact iOS 16.6/20G75 MediaExperience routing adapter. This changes a transient
+// Identity-checked MediaExperience routing adapter. This changes a transient
 // byte in mediaserverd only; no preferences or firmware files are modified.
 #include "AudioRoute.h"
 #include <cstdint>
@@ -134,6 +134,7 @@ extern "C" void CDV3AudioHost(const void *helper,bool own) {
 #include <mach/mach.h>
 #include <mach/vm_map.h>
 #include "AudioVM.h"
+#include "AudioRouteProfile.h"
 #include <mach/mach_time.h>
 #include <notify.h>
 #include <signal.h>
@@ -181,21 +182,27 @@ static bool AudioMapped(uintptr_t address,size_t bytes,vm_prot_t required) {
 }
 static void AudioImage(const mach_header *header,intptr_t slide) {
     if (AudioAttempted || header->magic!=MH_MAGIC_64) return;
-    constexpr uint8_t wanted[]={0x17,0x90,0xdb,0xae,0x04,0xb6,0x32,0xb7,
-        0xb5,0xe7,0xaa,0x39,0xe5,0x71,0xb2,0x08};
-    constexpr uint64_t setterAddress=0x195a6450cULL,flagAddress=0x1dd3753e0ULL;
+    const CDV3AudioProfiles::Profile *profile=nullptr;
     const uint8_t *p=(const uint8_t *)header+sizeof(mach_header_64);
     const uint8_t *end=p+header->sizeofcmds;
-    bool match=false,text=false,data=false;
+    // Resolve identity before interpreting any profile-specific addresses.
     for (uint32_t i=0;i<header->ncmds;i++) {
         if (end-p<(ptrdiff_t)sizeof(load_command)) return;
         auto lc=(const load_command *)p;
         if (lc->cmdsize<sizeof(load_command) || lc->cmdsize>(size_t)(end-p)) return;
         if (lc->cmd==LC_UUID && lc->cmdsize==sizeof(uuid_command))
-            match=!memcmp(((const uuid_command *)lc)->uuid,wanted,16);
+            profile=CDV3AudioProfiles::Find(((const uuid_command *)lc)->uuid,(uint32_t)header->cputype,(uint32_t)header->cpusubtype);
+        p+=lc->cmdsize;
+    }
+    if (!profile) return;
+    const uint64_t setterAddress=profile->setter,flagAddress=profile->flag;
+    bool text=false,data=false;
+    p=(const uint8_t *)header+sizeof(mach_header_64);
+    for (uint32_t i=0;i<header->ncmds;i++) {
+        auto lc=(const load_command *)p;
         if (lc->cmd==LC_SEGMENT_64 && lc->cmdsize>=sizeof(segment_command_64)) {
             auto segment=(const segment_command_64 *)lc;
-            if (!strncmp(segment->segname,"__TEXT",16) && segment->vmaddr==0x1959c6000ULL &&
+            if (!strncmp(segment->segname,"__TEXT",16) && segment->vmaddr==profile->text &&
                 setterAddress>=segment->vmaddr && setterAddress+16<=segment->vmaddr+segment->vmsize &&
                 (segment->initprot&(VM_PROT_READ|VM_PROT_EXECUTE))==(VM_PROT_READ|VM_PROT_EXECUTE)) text=true;
             if (!strncmp(segment->segname,"__DATA",16) && flagAddress>=segment->vmaddr &&
@@ -204,17 +211,14 @@ static void AudioImage(const mach_header *header,intptr_t slide) {
         }
         p+=lc->cmdsize;
     }
-    if (!match) return;
     AudioAttempted=true;
     auto setter=(uint8_t *)(setterAddress+slide);
     auto flag=(uint8_t *)(flagAddress+slide);
-    constexpr uint8_t prologue[]={0x88,0xc8,0x23,0xb0,0x08,0x21,0x07,0x91,
-        0x00,0x61,0x08,0x39,0xc0,0x03,0x5f,0xd6};
     if (!text || !data || !AudioHookFunction ||
         !AudioMapped((uintptr_t)setter,16,VM_PROT_READ|VM_PROT_EXECUTE) ||
         !AudioMapped((uintptr_t)flag,1,VM_PROT_READ|VM_PROT_WRITE) ||
-        memcmp(setter,prologue,16) || *flag>1) {
-        AudioReport(false,@"MediaExperience identity, mapping, hook provider or prologue mismatch",!text?4:!data?5:!AudioHookFunction?6:!AudioMapped((uintptr_t)setter,16,VM_PROT_READ|VM_PROT_EXECUTE)?7:!AudioMapped((uintptr_t)flag,1,VM_PROT_READ|VM_PROT_WRITE)?8:memcmp(setter,prologue,16)?9:10);return;
+        memcmp(setter,profile->prologue,16) || *flag>1) {
+        AudioReport(false,@"MediaExperience identity, mapping, hook provider or prologue mismatch",!text?4:!data?5:!AudioHookFunction?6:!AudioMapped((uintptr_t)setter,16,VM_PROT_READ|VM_PROT_EXECUTE)?7:!AudioMapped((uintptr_t)flag,1,VM_PROT_READ|VM_PROT_WRITE)?8:memcmp(setter,profile->prologue,16)?9:10);return;
     }
     // The hook provider publishes a callable original trampoline. Our mutex
     // blocks an arriving hook until the flag pointer is also published.
@@ -223,7 +227,7 @@ static void AudioImage(const mach_header *header,intptr_t slide) {
     if (NativeAudioSetter) AudioFlag=flag;
     pthread_mutex_unlock(&AudioMutex);
     if (!NativeAudioSetter) {AudioReport(false,@"Audio setter hook failed",11);return;}
-    AudioReport(true,@"Exact MediaExperience adapter loaded; awaiting owned host and live audio lease");
+    AudioReport(true,[NSString stringWithFormat:@"MediaExperience profile %s loaded; awaiting owned host and live audio lease",profile->name]);
 }
 __attribute__((constructor)) static void AudioLoad() { @autoreleasepool {
     if (![NSProcessInfo.processInfo.processName isEqual:@"mediaserverd"]) return;

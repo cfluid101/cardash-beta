@@ -1,3 +1,5 @@
+> Historical diagnostics 3 collection guide. The current full compatibility package is described in [COMPATIBILITY-BETA.md](COMPATIBILITY-BETA.md); install that package and test normally, then export. The bounded report behavior described below is retained.
+
 # HTTPS3 compatibility diagnostics 3
 
 Package: `3.0.0~beta.5+https.3.open.1.diag.3`.

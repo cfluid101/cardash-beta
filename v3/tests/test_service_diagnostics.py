@@ -143,6 +143,24 @@ class ServiceDiagnosticsTest(unittest.TestCase):
             self.assertTrue(any(r.get('event') == 'last-complete' for r in rows))
             self.assertTrue(any(r.get('event') == 'report_read_warning' for r in rows))
 
+    def test_live_export_retains_adapter_reasons_on_success_and_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for ready, reason_code, reason in ((True, 0, 'ready'), (False, 5, 'entry_prologue_mismatch')):
+                with self.subTest(ready=ready):
+                    adapter = {'ready': ready, 'pid': 1234, 'code': 1 if ready else 2,
+                               'reasonCode': reason_code, 'reason': reason,
+                               'privateKey': 'never-export-this-secret'}
+                    reply = {'ok': True, 'report': '{"event":"native_inspection"}\n',
+                             'status': {'active': ready, 'nativeFrames': 100 if ready else 0,
+                                        'transport': adapter, 'videoBudget': adapter}}
+                    rows, text = self.report(folder, reply=reply)
+                    for name in ('transport', 'videoBudget'):
+                        exported = rows[0]['status'][name]
+                        self.assertEqual(exported['ready'], ready)
+                        self.assertEqual(exported['reasonCode'], reason_code)
+                        self.assertEqual(exported['reason'], reason)
+                    self.assertNotIn('never-export-this-secret', text)
+
     def test_non_utf8_log_bytes_still_produce_parseable_report(self):
         with tempfile.TemporaryDirectory() as folder:
             Path(folder, 'installation.log').write_bytes(b'loader error: \xff\xfe\n')

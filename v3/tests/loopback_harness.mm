@@ -66,7 +66,8 @@ static void FakeEvent(void *block) {
         assert(!helperDestroyed);
     }
 }
-int main() { @autoreleasepool {
+int main(int argc,char **) { @autoreleasepool {
+    GuardedLayout=argc==2;
     DerivedStorage=Storage; OriginalUpdate=FakeUpdate; OriginalEvent=FakeEvent;
     CFTypeRef helper=CFBridgingRetain([HarnessHelper new]);
     auto state=(uint8_t *)Storage(helper);
@@ -78,6 +79,7 @@ int main() { @autoreleasepool {
     *(void **)(state+0xa8)=(__bridge void *)host;
     *(CFStringRef *)(state+0x50)=CFSTR("en2");
     *(uint32_t *)(state+0x58)=16;*(double *)(state+0x48)=42;
+    *(double *)(state+0x38)=40;
     *(double *)(state+0xb0)=1234;
     NSDictionary *map=@{@"en2":@[@"fe80::1"]};
     *(CFDictionaryRef *)(state+0x98)=(__bridge CFDictionaryRef)map;
@@ -85,6 +87,23 @@ int main() { @autoreleasepool {
         assert(*(CFStringRef *)(state+0x50)==CFSTR("en2"));
         assert(*(uint32_t *)(state+0x58)==16 && *(double *)(state+0x48)==42);
         assert(*(CFDictionaryRef *)(state+0x98)==(__bridge CFDictionaryRef)map);};
+    if(GuardedLayout) {
+        // A matched image alone must not permit writes to incompatible live
+        // state. FakeUpdate observes the untouched physical inputs on fallback.
+        scoped=false;*(double *)(state+0x38)=0;
+        assert(Update(helper)==-123);restored();
+        *(double *)(state+0x38)=40;
+        *(CFTypeRef *)(state+0x98)=(__bridge CFTypeRef)@[];
+        assert(Update(helper)==-123);
+        assert(state[0x40]==0 && state[0x68]==1 && *(uint32_t *)(state+0x58)==16);
+        *(CFDictionaryRef *)(state+0x98)=(__bridge CFDictionaryRef)map;
+        *(CFTypeRef *)(block+0x28)=helper;*(int32_t *)(block+0x40)=4;
+        *(uint32_t *)(state+0xb8)=1;*(double *)(state+0x38)=0;
+        CDV3AudioHost(helper,true);Event(block);assert(!*(void **)(state+0xa8) && !audioOwn);
+        *(void **)(state+0xa8)=(__bridge void *)host;*(double *)(state+0x38)=40;
+        assert(updates==2 && events==1);updates=0;events=0;
+        puts("Guarded layout refusal preserves native forwarding");
+    }
     scoped=true; assert(Update(helper)==-123); restored();
     throwUpdate=true; bool caught=false;
     @try {Update(helper);} @catch(NSException *e){(void)e;caught=true;}

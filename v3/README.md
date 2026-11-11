@@ -1,12 +1,12 @@
-> **Compatibility diagnostics 3 — diagnostic prerelease.** For this package, follow [SERVICE-DIAGNOSTICS.md](SERVICE-DIAGNOSTICS.md) and export a report. It includes arm64/arm64e injection code and read-only framework inspection, but is not a completed iPhone 14 Pro Max/iOS 16.0 port. The normal HTTPS3 release remains separate. The connection instructions and device results below describe the earlier streaming beta.
+> **Compatibility beta 1 — full V3 with an experimental arm64e/iOS 16.0 implementation profile.** Follow [COMPATIBILITY-BETA.md](COMPATIBILITY-BETA.md). Diagnostic export remains available on success or failure. The new target still requires physical-device validation; historical results below concern earlier builds.
 
 # CarDash V3 Beta 5 — HTTPS3
 
 A separate, phone-resident **native CarPlay video, touch and audio-output beta** with experimental installation on other rootless arm64 devices. Native operation has been verified on iPhone 8 Plus / iOS 16.6 build 20G75; other targets are unverified. Sessions have no fixed time limit. The receiver runs entirely on the phone; a running session needs no Mac, USB cable, SSH connection or browser setup code.
 
-This receives the phone's real iOS 16.6 CarPlay interface. It does not install iOS 27 or emulate a newer CarPlay runtime. Original CarDash and V2 preferences remain separate.
+This receives the phone's own native CarPlay interface. It does not install iOS 27 or emulate a newer CarPlay runtime. Original CarDash and V2 preferences remain separate.
 
-**HTTPS3 supersedes the HTTPS2 tester build.** Use the matching `3.0.0~beta.5+https.3.open.1` package and [HTTPS3 tester page](https://cfluid101.github.io/cardash-beta/option1/?v=https3). The HTTPS site supplies static browser files; video, input, status and optional audio travel directly between the browser and the iPhone on the local network. They are not relayed through GitHub or another cloud service. Loading the hosted page initially requires internet access; this prototype has no offline cache.
+**HTTPS3 supersedes the HTTPS2 tester build.** This compatibility package is `3.0.0~beta.5+https.3.open.2` and uses the same [HTTPS3 tester page](https://cfluid101.github.io/cardash-beta/option1/?v=https3). The HTTPS site supplies static browser files; video, input, status and optional audio travel directly between the browser and the iPhone on the local network. They are not relayed through GitHub or another cloud service. Loading the hosted page initially requires internet access; this prototype has no offline cache.
 
 HTTPS3 addresses progressive congestion with a scoped native encoder budget that starts at 3 Mbps and decreases when the browser reports delay. It preserves display geometry and audio while adapting. Canvas viewers no longer trigger periodic encoder restarts, a stalled viewer cannot hold native ingress indefinitely, and display recovery resumes after its cooldown instead of waiting permanently for Reconnect. Device-output ownership is isolated from unrelated native connection updates. See `TEST-RESULTS.md` for controlled tests and remaining Tesla validation.
 

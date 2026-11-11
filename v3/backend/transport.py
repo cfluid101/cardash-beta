@@ -72,17 +72,46 @@ def audio_route_status(probe=None,alive=None,state_probe=None):
     return result
 
 
-def transport_status(state=None, alive=None, probe=None):
+TRANSPORT_REASONS = {
+    0: 'transport adapter ready',
+    1: 'transport adapter is loading',
+    2: 'unsupported APTransport firmware UUID or CPU',
+    3: 'the 20A357 profile requires the arm64e adapter slice',
+    4: 'native hook provider is unavailable',
+    5: 'CMBaseObjectGetDerivedStorage is unavailable',
+    6: 'transport entry bounds or executable mapping mismatch',
+    7: 'transport entry instruction fingerprint mismatch',
+    8: 'transport update hook failed',
+    9: 'transport disconnect hook failed',
+    10: 'live transport state mapping or type checks failed; no loopback writes made',
+}
+
+
+def transport_status(state=None, alive=None, probe=None, reason_probe=None):
     def running(pid):
         os.kill(pid,0)
     result={'ready':False}
+    read=probe or notification_state
     try:
-        value=(probe or notification_state)()
+        value=read()
         pid,code=value>>8,value&255
         result.update(pid=pid,code=code)
         if pid<=1:raise ValueError('adapter not loaded; reinstall this beta to reload the media service')
         (alive or running)(pid)
-        if code!=1:raise ValueError('adapter failed its exact-firmware or hook-provider check; export diagnostics')
+        # Optional, PID-bound diagnostic state. Old adapters have no sideband;
+        # absent, stale or unreadable details must not change the readiness ABI.
+        try:
+            detail=(reason_probe or (lambda:notification_state(b'com.cfluid.cardash.v3.loopback.ready_reason')))()
+            detail_pid,detail_code,reason=detail>>32,(detail>>16)&0xffff,detail&0xffff
+            if (detail_pid==pid and detail_code==code and code in (1,2) and
+                    ((code==1)==(reason==0)) and read()==value):
+                result['reasonCode']=reason
+                if reason in TRANSPORT_REASONS:result['reason']=TRANSPORT_REASONS[reason]
+        except (OSError,ValueError,AttributeError):pass
+        if code!=1:
+            detail=result.get('reason')
+            raise ValueError(('adapter unavailable: '+detail+'; export diagnostics') if detail else
+                             'adapter failed its exact-firmware or hook-provider check; export diagnostics')
         result.update(ready=True,error='')
     except (OSError,ValueError,AttributeError) as error:
         result['error']='USB-free transport is unavailable: '+str(error)

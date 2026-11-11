@@ -2,6 +2,20 @@
 import math
 from transport import AudioLease, MachClock, notification_state
 
+VIDEO_READY_REASONS={
+    0:'ready',
+    1:'entry_address_overflow',
+    2:'hook_provider_unavailable',
+    3:'required_symbols_unavailable',
+    4:'entry_mapping_mismatch',
+    5:'entry_prologue_mismatch',
+    6:'property_key_type_mismatch',
+    7:'copy_property_symbols_or_key_mismatch',
+    8:'hook_installation_failed',
+    9:'unsupported_image_identity_or_header',
+    10:'arm64e_adapter_slice_required',
+}
+
 class VideoBudget:
     def __init__(self):
         self.bps=3000000;self.last=-float('inf');self.healthy_since=None
@@ -37,7 +51,19 @@ def budget_status():
         result.update(pid=value>>8,code=value&255)
         state=notification_state(b'com.cfluid.cardash.v3.video.state')
         observed=notification_state(b'com.cfluid.cardash.v3.video.observed')
-        return {'ready':value&255==1,'pid':value>>8,'code':value&255,'requestedBps':state&0xffffffff,
+        result={'ready':value&255==1,'pid':value>>8,'code':value&255,'requestedBps':state&0xffffffff,
                 'nativeBps':observed>>32,'appliedBps':observed&0xffffffff}
     except (OSError,AttributeError) as error:
         result['error']=str(error);return result
+    # Optional: older adapters publish only the original ready channel. A stale
+    # PID/status, missing registration or readiness transition supplies no reason
+    # and must not turn a valid existing readiness result into a failure.
+    try:
+        reason=notification_state(b'com.cfluid.cardash.v3.video.ready_reason')
+        reason_pid,reason_status,reason_code=reason>>32,(reason>>16)&0xffff,reason&0xffff
+        if (result['pid']>1 and reason_pid==result['pid'] and reason_status==result['code'] and
+            reason_status in (1,2) and (reason_status==1)==(reason_code==0) and
+            notification_state(b'com.cfluid.cardash.v3.video.ready')==value):
+            result.update(reasonCode=reason_code,reason=VIDEO_READY_REASONS.get(reason_code,'unknown_reason'))
+    except (OSError,AttributeError):pass
+    return result

@@ -1,5 +1,7 @@
 # Build
 
+Current package: **HTTPS3 compatibility beta 1**, `3.0.0~beta.5+https.3.open.2`. It adds exact implementation profiles for the four frameworks reported by the iOS 16.0/20A357 arm64e tester. `HostProfile.mm` is linked into the standalone helper; the three media profiles are in the universal injected adapter. See [NATIVE-PROFILES.md](NATIVE-PROFILES.md) for evidence and [COMPATIBILITY-BETA.md](COMPATIBILITY-BETA.md) for installation and remaining physical tests. The original 16.6 paths below remain alongside these new experimental paths. Historical candidate labels below describe earlier revisions.
+
 Build on the prepared Mac with Xcode/iPhoneOS SDK, Python3, Node20+ (tests), FFmpeg (validation), and Homebrew OpenSSL3 headers. Run `python3 v3/build.py` from the diagnostics repository. It builds/signs arm64 executables, the UIKit companion, native service launcher, crypto bridge, AudioToolbox AAC decoder and network-address bridge, plus a universal arm64/arm64e media-service adapter, then constructs a root-owned rootless DEB under `dist/v3`.
 
 The link input at `build/v3/device/libcrypto.3.dylib` must be from the rootless Procursus libssl3 3.2.1 package used on the target. It is an external build dependency and is not copied into the output package. Its install name must resolve to `/var/jb/usr/lib/libcrypto.3.dylib`. Use the package manager's verified package/library; do not substitute an unrelated desktop dylib.
@@ -16,7 +18,9 @@ xcrun clang -dynamiclib -Wall -Wextra -Werror -I"$(brew --prefix openssl@3)/incl
 codesign --force --sign - build/v3/host/libcardashcrypto.dylib
 xcrun clang -dynamiclib -Wall -Wextra -Werror v3/native/AudioDecode.c -framework AudioToolbox -o build/v3/host/libcardashaudio.dylib
 codesign --force --sign - build/v3/host/libcardashaudio.dylib
-CDV3_CRYPTO="$PWD/build/v3/host/libcardashcrypto.dylib" CDV3_AUDIO="$PWD/build/v3/host/libcardashaudio.dylib" python3 -m unittest discover -s v3/tests
+xcrun clang -dynamiclib -std=c11 -Wall -Wextra -Werror v3/native/VideoDecode.c -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework ImageIO -framework CoreFoundation -o build/v3/host/libcardashvideo.dylib
+codesign --force --sign - build/v3/host/libcardashvideo.dylib
+CDV3_CRYPTO="$PWD/build/v3/host/libcardashcrypto.dylib" CDV3_AUDIO="$PWD/build/v3/host/libcardashaudio.dylib" CDV3_VIDEO="$PWD/build/v3/host/libcardashvideo.dylib" python3 -m unittest discover -s v3/tests
 node --test v3/tests/test_*.mjs
 node --test receiver/test/*.test.mjs
 python3 receiver/test/session_lock_test.py

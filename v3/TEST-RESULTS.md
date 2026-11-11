@@ -1,3 +1,21 @@
+# HTTPS3 compatibility beta 1 — local verification
+
+Package: `3.0.0~beta.5+https.3.open.2` (November 10, 2026). This is the full receiver with experimental implementation profiles matching the iPhone 14 Pro Max / iOS 16.0 / 20A357 report. **No physical phone was contacted or installed on for this revision. The new native path has not been verified on the tester's device.**
+
+**358 automated cases passed:** 207 V3 Python/native/package cases, 94 V3 JavaScript cases, 21 reference-receiver JavaScript cases, one reference session-lock test and 35 legacy diagnostic cases. The V3 run supplied all three host crypto/audio/video bridges and had no skipped cases. The legacy builder's ABI/ownership, identity-gate and host wire-format checks also passed. Browser assets, reference receiver and shared legacy native sources are unchanged.
+
+New checks cover exact UUID/CPU profile selection, instruction and executable mapping refusal, PAC-inclusive entry fingerprints, scoped loopback state restoration and final-reference ownership, independent audio setter address decoding, four-argument CopyProperty status/allocator/result ownership, and verified dictionary-host fields before/after secure coding. Host fixtures exercise unsupported methods, altered field values and completion evidence without requesting a real session. Report inspection remains metadata-only.
+
+Optional transport/video failure details are PID/status checked and ignored when missing, stale or inconsistent. Success and failure reasons survive bounded app export while unrelated secret fields are rejected. The exporter regression first failed because `reasonCode` was filtered out, then passed after correction. Repeated identical transport refusals reuse notification registrations and suppress duplicate publication/logging. Normal successful native frame/update paths do not add diagnostic work.
+
+The iPhoneOS build succeeds with warnings as errors, producing both arm64 and arm64e media-adapter slices. Package tests inspect the actual DEB, strict adapter signatures and both slices' iOS 16.0 deployment floor, rootless ownership/paths, absence of firmware installer restrictions and absence of saved identities/private keys. Independent reviews found no blocking issues in the new host, transport, audio, video and diagnostic paths.
+
+Static evidence matches four framework UUIDs reported by the tester. REA opened a framework but its deep provider was unavailable and its Mach-O inventory could not parse the reconstructed segment ordering. Xcode/LLVM disassembly and bounded metadata analysis provided the implementation evidence. Some external stub names remain derived from consistent relocation/calling patterns; this is explicitly documented in NATIVE-PROFILES.md, not represented as a physical run or successful REA decompilation.
+
+Remaining device checks: actual arm64e injection/trampoline/PAC execution, CarKit construction and handshake, increasing native frames and input, device/Bluetooth routing, locked app switching, USB-free reconnect, cleanup and longer-duration behavior. This is not a completed RootHide port or universal jailbreak compatibility claim. Existing setup is retained; install over V3, connect normally, and export diagnostics whether it works or fails. See COMPATIBILITY-BETA.md. The original project, saved state and existing public HTTPS3 build are preserved.
+
+# Historical diagnostics validation
+
 # Compatibility diagnostics 3 — host and package verification
 
 Package: `3.0.0~beta.5+https.3.open.1.diag.3` (November 10, 2026). This is a diagnostic prerelease, not a completed iPhone 14 Pro Max/iOS 16.0 native CarPlay port.

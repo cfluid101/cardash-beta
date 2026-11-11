@@ -15,7 +15,8 @@ class SessionInspectionTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory(prefix='cardash-inspection-')
         cls.binary = Path(cls.tmp.name) / 'session-helper'
         sources = [ROOT / 'v3/native/SessionProbe.mm', ROOT / 'src/Common.m',
-                   ROOT / 'src/NativeIdentity.mm', ROOT / 'src/HostPayload.mm']
+                   ROOT / 'src/NativeIdentity.mm', ROOT / 'src/HostPayload.mm',
+                   ROOT / 'v3/native/HostProfile.mm']
         # Permit the pre-fix CLI to build, so the regression fails on behavior
         # (missing --inspect), rather than on a nonexistent source file.
         inspection = ROOT / 'v3/native/SessionInspection.mm'
@@ -35,7 +36,11 @@ class SessionInspectionTest(unittest.TestCase):
 @end
 @implementation CARSessionRequestHost
 + (void)initialize {_exit(91);}
+#ifdef DICTIONARY_ONLY
+- (id)initWithHostProperties:(id)p {_exit(92);}
+#else
 - (id)initWithDisplayName:(id)n wiredIPv6Addresses:(id)w wirelessIPv6Addresses:(id)r port:(long long)p carplayWiFiUUID:(id)u deviceIdentifier:(id)i publicKey:(id)k sourceVersion:(id)v wiredCarPlaySimulator:(bool)s {_exit(92);}
+#endif
 @end
 @interface CARSessionRequestClient : NSObject
 @end
@@ -57,7 +62,9 @@ class SessionInspectionTest(unittest.TestCase):
 ''')
         cls.fixture = Path(cls.tmp.name) / 'Fixture.dylib'
         cls.mismatch_fixture = Path(cls.tmp.name) / 'Mismatch.dylib'
-        for output, extra in ((cls.fixture, []), (cls.mismatch_fixture, ['-DMISMATCH'])):
+        cls.dictionary_fixture = Path(cls.tmp.name) / 'Dictionary.dylib'
+        for output, extra in ((cls.fixture, []), (cls.mismatch_fixture, ['-DMISMATCH']),
+                              (cls.dictionary_fixture, ['-DDICTIONARY_ONLY'])):
             subprocess.run([*cls.flags, '-dynamiclib', *extra, str(fixture),
                             '-framework', 'Foundation', '-o', str(output)],
                            check=True, capture_output=True)
@@ -73,6 +80,7 @@ int main(int argc,char **argv){@autoreleasepool{
         cls.driver = Path(cls.tmp.name) / 'inspection-driver'
         subprocess.run([*cls.flags, str(driver), str(inspection),
                         str(ROOT / 'src/Common.m'), str(ROOT / 'src/NativeIdentity.mm'),
+                        str(ROOT / 'v3/native/HostProfile.mm'), str(ROOT / 'src/HostPayload.mm'),
                         '-framework', 'Foundation', '-o', str(cls.driver)],
                        check=True, capture_output=True)
         slow_loader = Path(cls.tmp.name) / 'SlowLoader.c'
@@ -115,6 +123,8 @@ __attribute__((used,section("__DATA,__interpose"))) static struct {
             self.assertIsInstance(report[field], str)
         self.assertIn('typed_completion_enabled', report['completion_identity'])
         self.assertEqual(len(report['methods']), 4)
+        self.assertEqual(report['host_profile']['selected_profile'], 'unsupported')
+        self.assertFalse(report['host_profile']['profile_matched'])
         self.assertNotIn('request_started', result.stdout)
         self.assertNotIn('timing_sync', result.stdout)
         self.assertNotIn('cleanup', result.stdout)
@@ -166,6 +176,15 @@ __attribute__((used,section("__DATA,__interpose"))) static struct {
         self.assertFalse(report['methods'][2]['matches_expected_types'])
         self.assertTrue(report['methods'][0]['matches_expected_types'])
         self.assertFalse(report['completion_identity']['typed_completion_enabled'])
+
+    def test_missing_long_initializer_does_not_trigger_class_initialization(self):
+        report = self.inspect_fixture(self.dictionary_fixture)
+        self.assertFalse(report['methods'][0]['available'])
+        initializer = report['host_profile']['methods'][0]
+        self.assertEqual(initializer['selector'], 'initWithHostProperties:')
+        self.assertTrue(initializer['available'])
+        self.assertTrue(initializer['matches_types'])
+        self.assertFalse(report['host_profile']['profile_matched'])
 
     def test_missing_framework_is_reported_without_losing_identity_facts(self):
         report = self.inspect_fixture(Path(self.tmp.name) / 'Missing.dylib')

@@ -1,6 +1,7 @@
 #import "SessionInspection.h"
 #import "Common.h"
 #import "NativeIdentity.h"
+#import "HostProfile.h"
 #import <objc/runtime.h>
 #include <dlfcn.h>
 #include <limits.h>
@@ -24,10 +25,20 @@ static NSString *CDInspectionArchitecture(void) {
 #endif
 }
 
+static Method CDInspectionFindMethod(Class cls,SEL selector) {
+    // Avoid dynamic method resolution / +initialize when an older image lacks
+    // a queried selector. All inspection remains metadata-only.
+    for(unsigned depth=0;cls&&depth<32;depth++,cls=class_getSuperclass(cls)){
+        unsigned count=0;Method *list=class_copyMethodList(cls,&count);Method found=NULL;
+        for(unsigned i=0;i<count;i++)if(method_getName(list[i])==selector){found=list[i];break;}
+        free(list);if(found)return found;
+    }return NULL;
+}
+
 static NSDictionary *CDInspectionMethod(NSString *className,NSString *selector,
                                        const char *expectedReturn,NSArray<NSString *> *expectedArguments) {
     Class cls=NSClassFromString(className);
-    Method method=class_getInstanceMethod(cls,NSSelectorFromString(selector));
+    Method method=CDInspectionFindMethod(cls,NSSelectorFromString(selector));
     NSMutableDictionary *facts=[@{@"class":className,@"selector":selector,@"available":@(method!=NULL),
         @"class_image":CDBoundedInspectionString(cls?class_getImageName(cls):NULL),
         @"encoding":@"",@"return_type":@"",@"argument_types":@[],@"argument_count":@0,
@@ -89,11 +100,15 @@ NSDictionary *CDV3InspectCarKitAtPath(NSString *frameworkPath) {
             CDInspectionMethod(@"CARSessionStatus",@"currentSession","@",@[])
         ];
         report[@"methods"]=methods;
-        report[@"normal_mode_method_checks_passed"]=@([methods[0][@"matches_normal_owner_checks"] boolValue]&&
-            [methods[2][@"matches_normal_owner_checks"] boolValue]&&[methods[3][@"matches_normal_owner_checks"] boolValue]);
         // @? describes a block argument, not the block's own callable ABI.
-        // Preserve the existing identity gate instead of guessing that ABI.
-        report[@"completion_identity"]=CDCarKitCompletionIdentity(NSClassFromString(@"CARSessionRequestClient"));
+        // Profiles retain their separate, explicit static evidence bases.
+        Class completionClass=[methods[1][@"available"] boolValue]?NSClassFromString(@"CARSessionRequestClient"):Nil;
+        NSDictionary *legacy=CDCarKitCompletionIdentity(completionClass);
+        NSDictionary *profile=CDV3InspectHostProfile(NSClassFromString(@"CARSessionRequestHost"),
+            NSClassFromString(@"CARSessionRequestClient"),NSClassFromString(@"CARSessionStatus"),legacy);
+        report[@"host_profile"]=profile;
+        report[@"normal_mode_method_checks_passed"]=profile[@"normal_mode_method_checks_passed"];
+        report[@"completion_identity"]=profile[@"completion_identity"];
         report[@"complete"]=@YES;
     }@catch(NSException *error){
         report[@"inspection_error"]=@{@"name":CDBoundedInspectionString(error.name.UTF8String),
