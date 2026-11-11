@@ -1,6 +1,8 @@
-# HTTPS3 service diagnostics candidate 1
+# HTTPS3 compatibility diagnostics candidate 2
 
-Package version: `3.0.0~beta.5+https.3.open.1.diag.1`.
+Package version: `3.0.0~beta.5+https.3.open.1.diag.2`.
+
+This revision adds the missing arm64e slice to the injected media-service adapter while retaining arm64. iOS selects the process-compatible slice automatically. The report already collects the device model, iOS version/build and package version automatically. Framework hooks remain specific to the originally verified images; adding a slice is not an iOS 16.0 framework port. Do not present this local candidate as a universal working beta. See COMPATIBILITY.md.
 
 This candidate addresses the missing evidence behind **V3 service is unavailable** when both the companion connection and local Safari preview fail. It does not claim to repair RootHide startup or port the native CarPlay adapters to another firmware.
 

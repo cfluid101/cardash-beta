@@ -1,6 +1,6 @@
 # Build
 
-Build on the prepared Mac with Xcode/iPhoneOS SDK, Python3, Node20+ (tests), FFmpeg (validation), and Homebrew OpenSSL3 headers. Run `python3 v3/build.py` from the diagnostics repository. It builds/signs arm64 executables, the UIKit companion, native service launcher, crypto bridge, AudioToolbox AAC decoder, network-address bridge and APTransport/MediaExperience adapters, then constructs a root-owned rootless DEB under `dist/v3`.
+Build on the prepared Mac with Xcode/iPhoneOS SDK, Python3, Node20+ (tests), FFmpeg (validation), and Homebrew OpenSSL3 headers. Run `python3 v3/build.py` from the diagnostics repository. It builds/signs arm64 executables, the UIKit companion, native service launcher, crypto bridge, AudioToolbox AAC decoder and network-address bridge, plus a universal arm64/arm64e media-service adapter, then constructs a root-owned rootless DEB under `dist/v3`.
 
 The link input at `build/v3/device/libcrypto.3.dylib` must be from the rootless Procursus libssl3 3.2.1 package used on the target. It is an external build dependency and is not copied into the output package. Its install name must resolve to `/var/jb/usr/lib/libcrypto.3.dylib`. Use the package manager's verified package/library; do not substitute an unrelated desktop dylib.
 
@@ -48,4 +48,10 @@ The package version is `3.0.0~beta.5+https.3.open.1`. Firmware dependencies and 
 
 ## Local service diagnostics candidate
 
-Version `3.0.0~beta.5+https.3.open.1.diag.1` links UIKit-independent ServiceClient, ServiceEnvironment and ServiceDiagnostics helpers into the companion. Host tests exercise real temporary Unix sockets and files. The standard rootless runtime/startup/native adapter paths remain unchanged. Offline `.jbroot` discovery is read-only evidence collection, not a RootHide package flavor. See SERVICE-DIAGNOSTICS.md.
+The diagnostics candidates link UIKit-independent ServiceClient, ServiceEnvironment and ServiceDiagnostics helpers into the companion. Host tests exercise real temporary Unix sockets and files. The standard rootless runtime/startup/native adapter paths remain unchanged. Offline `.jbroot` discovery is read-only evidence collection, not a RootHide package flavor. See SERVICE-DIAGNOSTICS.md.
+
+## Architecture candidate 2
+
+Version `3.0.0~beta.5+https.3.open.1.diag.2` builds the injected media-service library with both arm64 and arm64e slices. Standalone processes remain arm64. The package test inspects the actual DEB payload with lipo, checks both slices' iOS deployment floor and verifies signatures across all architectures. Installer model/firmware allowlists remain absent.
+
+The companion automatically includes model, iOS version/build and package version in an exported diagnostic report. Users do not select an architecture or copy build numbers manually. Exact framework identity/instruction checks remain unchanged; this corrects an architecture packaging gap and does not establish working native CarPlay on iOS 16.0/arm64e. See COMPATIBILITY.md for the remaining work.

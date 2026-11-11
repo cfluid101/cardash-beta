@@ -1,4 +1,14 @@
-# Service diagnostics candidate 1 — local verification
+# Architecture/compatibility candidate 2 — local verification
+
+Package: `3.0.0~beta.5+https.3.open.1.diag.2` (local development candidate, November 10, 2026).
+
+The injected media-service dylib now contains both arm64 and arm64e slices. A regression check against the previous single-architecture diagnostic DEB failed specifically because arm64e was absent. The rebuilt package passed binary-slice inspection, strict signature verification for all architectures, and per-slice iOS 16.0 deployment checks. Standalone helpers and companion remain arm64. Native hook implementations and firmware checks were not changed.
+
+Validation completed: 170 V3 Python/native/package cases, 94 V3 JavaScript tests, 21 reference-receiver JavaScript tests, one reference session-lock test and 35 legacy diagnostic tests: **321 unique passing cases**. The initial V3 run skipped six native video cases because the host VideoToolbox bridge was absent; after building that bridge, all eight video-module cases passed, including those six. No cases remain unexecuted from these suites. The legacy builder's ABI/ownership and identity-gate checks also passed.
+
+These checks establish host behavior and package contents, not actual arm64e injection, iOS 16.0 hook compatibility or universal jailbreak support. No phone was contacted, restarted or installed on; the public GitHub release and original project/state remain unchanged. The inherited diagnostic exporter collects model and iOS build automatically. Current coverage limits and the broad-compatibility work are in COMPATIBILITY.md.
+
+# Service diagnostics candidate 1 — historical local verification
 
 Package: `3.0.0~beta.5+https.3.open.1.diag.1`.
 

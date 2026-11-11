@@ -26,7 +26,20 @@ class PackageTest(unittest.TestCase):
    self.assertEqual(tar.extractfile(launcher).read(4),b'\xcf\xfa\xed\xfe')
    injection=plistlib.loads(tar.extractfile('./var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.plist').read())
    self.assertEqual(injection,{'Filter':{'Executables':['mediaserverd']}})
-   self.assertEqual(tar.extractfile('./var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib').read(4),b'\xcf\xfa\xed\xfe')
+   # The app may run as arm64 on newer phones while mediaserverd requires
+   # arm64e injection. Verify the shipped binary, not the DEB architecture label.
+   with tempfile.TemporaryDirectory() as tmp:
+    adapter=Path(tmp)/'CarDashV3Loopback.dylib'
+    adapter.write_bytes(tar.extractfile('./var/jb/Library/MobileSubstrate/DynamicLibraries/CarDashV3Loopback.dylib').read())
+    architectures=subprocess.check_output(['xcrun','lipo','-archs',str(adapter)],text=True).split()
+    self.assertEqual(set(architectures),{'arm64','arm64e'},'Injected adapter must support both system-process architectures')
+    subprocess.run(['codesign','--verify','--strict','--all-architectures',str(adapter)],check=True,capture_output=True)
+    for architecture in ('arm64','arm64e'):
+     thin=Path(tmp)/(architecture+'.dylib')
+     subprocess.run(['xcrun','lipo',str(adapter),'-thin',architecture,'-output',str(thin)],check=True,capture_output=True)
+     build=subprocess.check_output(['xcrun','vtool','-show-build',str(thin)],text=True)
+     self.assertRegex(build,r'platform\s+IOS\b')
+     self.assertRegex(build,r'minos\s+16\.0\b','Neither adapter slice may raise the iOS deployment floor')
    for item in tar.getmembers():
     self.assertEqual((item.uid,item.gid),(0,0));self.assertFalse(item.issym() or item.islnk());self.assertNotIn('..',Path(item.name).parts)
     if not item.isfile():continue
