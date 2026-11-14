@@ -1,0 +1,19 @@
+{
+  "viewer": "https3-viewer2",
+  "date": "2026-11-14",
+  "source_commit": "d679adfca830ea87d09fa8ad733bfcea2b4abc17",
+  "initial_size": "Start",
+  "later_native_resize": "explicit Resize display only",
+  "script_sha256": {
+    "assets/https3/transport.abd7ecc4fd565dd0.js": "abd7ecc4fd565dd0281534254dec5721bc1afc0a960b8fcd70e81779d0338374",
+    "assets/https3/audio.de5a9f42fd3e3976.js": "de5a9f42fd3e39762c2b28a43cc865d32cb9769f4f2700f8d9cffde4815d9697",
+    "assets/https3/canvas-video.dfd4f8c2225e01ca.js": "dfd4f8c2225e01cae98842d118f0d48c76224006bd0c791cd6de969d7e81b9a1",
+    "assets/https3/client.d272e31555faccc8.js": "d272e31555faccc8d09630f40322d0d7f6d1fc512ed09c903b495343ad18f21a"
+  },
+  "inline_style_sha256_base64": "Jgfl+sK/vabHDUqPn937k5CsliYTlbWyuA2NzQP0OOY=",
+  "tests": {
+    "javascript_passed": 117,
+    "desktop_browser_fixture": true,
+    "physical_tesla_tested": false
+  }
+}
