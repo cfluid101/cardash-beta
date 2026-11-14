@@ -16,7 +16,7 @@ function fixture({muted=false,audioError='',session='first',autoOpen=true,active
  const renderers=[],canvases=[],images=[],bitmaps=[];let bitmapDeferred=null;
  let failAudio=audioError,failEnable='',deferTouch=null;
  const classSet=new Set(),body={classList:{add(v){classSet.add(v);},remove(v){classSet.delete(v);}}};
- function element(){return {textContent:'',title:'',disabled:false,setAttribute(k,v){this[k]=v;}};}
+ function element(){return {style:{},textContent:'',title:'',disabled:false,setAttribute(k,v){this[k]=v;}};}
  const video={...element(),style:{},paused:true,currentTime:0,buffered:{length:0},pause(){this.paused=true;},load(){},removeAttribute(){this.url=null;},play(){this.paused=false;return Promise.resolve();},requestVideoFrameCallback(fn){videoCallbacks.push(fn);},getBoundingClientRect(){return {left:0,top:0,width:1280,height:720};},setPointerCapture(){}};
  Object.defineProperty(video,'src',{set(value){this.url=value;if(autoOpen)queueMicrotask(()=>urls.get(value)?.emit('sourceopen'));},get(){return this.url;}});
  function makeCanvas(){const c={hidden:true,width:0,height:0,draws:0,setPointerCapture(){},cloneNode(){return makeCanvas();},replaceWith(n){elements.set('#canvas',n);},getContext(){return {drawImage(){c.draws++;}}}};canvases.push(c);return c;}
@@ -272,34 +272,54 @@ test('native resize error survives the recovery status poll and clears on explic
  assert.doesNotMatch(f.elements.get('#status').textContent,/Native resize unavailable/);f.run('end()');
 });
 
-test('actual window resize during audio restart is reconciled after the transaction',async()=>{
- const f=fixture({audioOutput:'browser'});await settle();
- f.run(`let releaseStart,scheduled=[];setTimeout=(fn,ms)=>{if(ms===1200)scheduled.push(fn);return scheduled.length;};clearTimeout=()=>{};
- const oldFetch=fetch;fetch=(url,options)=>url==='/api/start'?new Promise(resolve=>{releaseStart=()=>resolve(oldFetch(url,options));}):oldFetch(url,options);`);
- f.elements.get('#audioOutput').value='phone';const pending=f.elements.get('#audioOutput').onchange();await settle();
- f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.events.get('resize')();await f.run('scheduled.shift()()');
- assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);
- f.run('releaseStart()');await pending;await settle();assert(f.run('scheduled.length')>0,'Transaction lost its pending viewport change');
- await f.run('scheduled.pop()()');await settle();const resize=f.requests.filter(r=>r.url==='/api/resize');
- assert.equal(resize.length,1);assert.deepEqual(resize[0].value.viewport,{width:773,height:601});assert.equal(f.elements.get('#audioOutput').value,'phone');f.run('end()');
+test('window size changes retain the stream, audio and session until Resize display is clicked',async()=>{
+ const f=fixture({active:false,audioOutput:'phone',canvasMode:'webcodecs'});await settle();await f.elements.get('#start').onclick();await settle();
+ const connections=f.run('nativeStats.videoConnections'),stops=f.audioCalls.stop,owner=f.run('videoConnection');
+ f.run(`let scheduled=[];setTimeout=(fn,ms)=>{if(ms===1200)scheduled.push(fn);return 1;};clearTimeout=()=>{};`);
+ for(const [width,height] of [[773,601],[1200,420],[773,601]]){
+  f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width,height});f.events.get('resize')();
+  while(f.run('scheduled.length')){await f.run('scheduled.shift()()');await settle();}
+  await f.run('poll()');await f.run('heartbeat()');await settle();
+ }
+ assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0,'A window change must not send a native resize');
+ assert.equal(f.run('inputSession'),'started');assert.equal(f.run('videoConnection'),owner);
+ assert.equal(f.run('nativeStats.videoConnections'),connections);assert.equal(f.audioCalls.stop,stops);
+ f.run('send(.5,.5,true);send(.5,.5,false)');await settle();assert.equal(f.touches.at(-1).session,'started');
+ await f.elements.get('#fitViewport').onclick();await settle();
+ const resize=f.requests.filter(r=>r.url==='/api/resize');assert.equal(resize.length,1);
+ assert.deepEqual(resize[0].value,{session:'started',viewport:{width:773,height:601}});
+ assert.equal(f.run('inputSession'),'resized');f.run('end()');
 });
 
-test('an older pending status poll cannot lose a second viewport change during resize',async()=>{
+test('a size change during a manual resize does not queue another native restart',async()=>{
  const f=fixture({active:false,audioOutput:'phone'});await settle();await f.elements.get('#start').onclick();await settle();
- f.run(`let releaseStatus,releaseResize,heldStatus=false,heldResize=false,scheduled=[];
- setTimeout=(fn,ms)=>{if(ms===1200)scheduled.push(fn);return scheduled.length;};clearTimeout=()=>{};
- const oldFetch=fetch;fetch=(url,options)=>{
-  if(url==='/api/status'&&!heldStatus){heldStatus=true;return new Promise(resolve=>{releaseStatus=()=>resolve(oldFetch(url,options));});}
-  if(url==='/api/resize'&&!heldResize){heldResize=true;return new Promise(resolve=>{releaseResize=()=>resolve(oldFetch(url,options));});}
-  return oldFetch(url,options);
- };`);
- const oldPoll=f.run('poll()');await settle();
- f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:526});const resize=f.run('reconcileLayout()');await settle();
- f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.events.get('resize')();await f.run('scheduled.shift()()');
- f.run('releaseResize()');await resize;await settle();f.run('releaseStatus()');await oldPoll;await f.run('poll()');await settle();
- assert(f.run('scheduled.length')>0,'Adopting the replacement session lost its pending viewport change');
- await f.run('scheduled.pop()()');await settle();const calls=f.requests.filter(r=>r.url==='/api/resize');
- assert.equal(calls.length,2);assert.deepEqual(calls.at(-1).value.viewport,{width:773,height:601});f.run('end()');
+ f.run(`let releaseResize,scheduled=[];setTimeout=(fn,ms)=>{if(ms===1200)scheduled.push(fn);return 1;};clearTimeout=()=>{};
+ const oldFetch=fetch;fetch=(url,options)=>url==='/api/resize'?new Promise(resolve=>{releaseResize=()=>resolve(oldFetch(url,options));}):oldFetch(url,options);`);
+ f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:526});const resizing=f.elements.get('#fitViewport').onclick();await settle();
+ f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.events.get('resize')();
+ f.run('releaseResize()');await resizing;await f.run('poll()');await settle();
+ assert.equal(f.run('scheduled.length'),0,'Window changes must not queue another native resize');
+ const calls=f.requests.filter(r=>r.url==='/api/resize');assert.equal(calls.length,1);
+ assert.deepEqual(calls[0].value.viewport,{width:773,height:526});f.run('end()');
+});
+
+test('audio output restart retains accepted native geometry after a browser shrink',async()=>{
+ const f=fixture({active:false,audioOutput:'phone'});await settle();await f.elements.get('#start').onclick();await settle();
+ f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width:773,height:601});f.events.get('resize')();
+ f.elements.get('#audioOutput').value='browser';await f.elements.get('#audioOutput').onchange();await settle();
+ assert.deepEqual(f.requests.filter(r=>r.url==='/api/start').at(-1).value.viewport,{width:1280,height:720});
+ assert.equal(f.requests.filter(r=>r.url==='/api/resize').length,0);f.run('end()');
+});
+
+test('controls tab tracks the contained CarPlay sidebar without issuing native commands',async()=>{
+ const f=fixture({canvasMode:'webcodecs'});await settle();f.service={sourceWidth:1280,sourceHeight:800};await f.run('poll()');
+ const before=f.requests.length;
+ for(const [width,height,left,top] of [[1280,800,0,144],[800,400,80,72],[800,600,0,140]]){
+  f.elements.get('video').getBoundingClientRect=()=>({left:0,top:0,width,height});f.events.get('resize')();
+  const style=f.elements.get('#exitFull').style;
+  assert.equal(style.left,left+'px');assert.equal(style.top,top+'px');
+ }
+ assert.equal(f.requests.length,before);f.run('end()');
 });
 
 test('secure canvas mode paints native frames and labels the renderer accurately',async()=>{
