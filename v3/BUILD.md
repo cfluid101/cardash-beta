@@ -1,6 +1,6 @@
 # Build
 
-Current package: **Beta 6**, `3.0.0~beta.6`; see [BETA-6.md](BETA-6.md). The build steps below are unchanged. Native lease lifetimes are now 30 seconds (media adapters) and 60 seconds (session helper), refreshed every second; text below that says eight seconds describes earlier packages.
+Current package: **Beta 7**, `3.0.0~beta.7`; see [BETA-7.md](BETA-7.md) and [BETA-6.md](BETA-6.md). The build steps below are unchanged. Native lease lifetimes are now 30 seconds (media adapters) and 60 seconds (session helper), refreshed every second; text below that says eight seconds describes earlier packages.
 
 Previous package: **HTTPS3 compatibility beta 1**, `3.0.0~beta.5+https.3.open.2`. It adds exact implementation profiles for the four frameworks reported by the iOS 16.0/20A357 arm64e tester. `HostProfile.mm` is linked into the standalone helper; the three media profiles are in the universal injected adapter. See [NATIVE-PROFILES.md](NATIVE-PROFILES.md) for evidence and [COMPATIBILITY-BETA.md](COMPATIBILITY-BETA.md) for installation and remaining physical tests. The original 16.6 paths below remain alongside these new experimental paths. Historical candidate labels below describe earlier revisions.
 

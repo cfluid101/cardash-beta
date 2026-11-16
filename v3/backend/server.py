@@ -40,20 +40,35 @@ from compatibility import inventory_status, inspect_session_helper
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.6'
+VERSION='3.0.0-beta.7'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
 # A browser that has shown CarPlay may be silent this long before its native
-# session ends. Beta 5 used 12 seconds: in the owner's November 2026 log 13 of
-# 15 sessions ended that way, several with the browser back within 5 seconds
-# and needing a manual Start. The session, pairing and audio survive a blip.
-BROWSER_GRACE_SECONDS=90
+# session ends. Beta 5 used 12 seconds and beta 6 used 90. The Tesla suspends a
+# shrunk browser completely (no script runs, nothing is read), so 90 seconds
+# ended CarPlay whenever the owner did something else in the car; the restart
+# that followed is also when iOS moved playing music to the CarPlay output.
+# The session, pairing and phone audio route now wait for the browser.
+BROWSER_GRACE_SECONDS=900
 FIRST_VIEWER_SECONDS=45
 KEEPALIVE_SECONDS=1
 # A periodic task this late means the whole service did not run (CPU/memory
 # starvation or a blocking call). The same log shows 13-46 second stalls.
 STALL_SECONDS=1.5
 VIDEO_DRAIN_SECONDS=10
+# iOS grows a TCP send buffer to megabytes. Video that the link or the browser
+# cannot take then waits in the kernel where this service cannot see or discard
+# it: the November 15 log has pictures 4.5 and 8.6 seconds late with nothing
+# queued here. A small buffer makes that visible within a fraction of a second.
+# (The receiver's own buffers are beyond reach.)
+VIDEO_SEND_BUFFER=64*1024
+VIDEO_WRITE_HIGH=16*1024
+VIDEO_QUEUE_FRAGMENTS=60
+# The muxer needs the next frame's time to close a sample, so the newest frame
+# was held until another arrived. iOS sends nothing while the screen is still:
+# the last frame of every change stayed unseen until the next change.
+PENDING_FLUSH_SECONDS=.04
+NOMINAL_FRAME_MICROS=16667
 
 class HTTPBusyError(ValueError):
     status=503
@@ -98,7 +113,7 @@ class Receiver:
         self.error='';self.native_error='';self.native={};self.frames=0;self.codec=None;self.muxer=None;self.pending=None
         self.control=None;self.event=None;self.video=None;self.pair=None;self.screen_key=None;self.ec=None
         self.viewers={};self.connections=set();self.sequence=0;self.native_watch=None;self.provisioning=False
-        self.capture=None;self.capture_bytes=0;self.last_pointer=None
+        self.capture=None;self.capture_bytes=0;self.last_pointer=None;self.pending_timer=None
         self.provision_task=None;self.provision_child=None
         self.generation=None
         self.reset_video_history();self.last_keyframe_request=-float('inf')
@@ -134,7 +149,7 @@ class Receiver:
         return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,network=self.network.status,transport=transport_status(self.state),
                     nativeFrames=self.frames,codec=self.codec,videoContinuousDecode=True,videoBudget={**budget_status(),"targetBps":self.video_budget.bps,"measuredBps":self.video_bps},videoConnected=bool(self.video),eventConnected=bool(self.event),videoKeyframes=self.video_keyframes,videoTimelineTicks=self.video_ticks,
                     native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
-                    browserGraceSeconds=BROWSER_GRACE_SECONDS,lastStop=self.stop_status(),service={'stalls':self.stalls,'stallSeconds':round(self.stall_seconds,1)},
+                    browserGraceSeconds=BROWSER_GRACE_SECONDS,browserSilentSeconds=self.browser_silence(),viewers=sum(1 for s in self.viewers.values() if not s.get('closed')),lastStop=self.stop_status(),service={'stalls':self.stalls,'stallSeconds':round(self.stall_seconds,1)},
                     audioSupported=True,audioOutput=self.audio_output,audioRouting=audio_route_status(),microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=self.display.width,sourceHeight=self.display.height,requestedViewport=self.display.viewport,actualSource=self.actual_source,displayVerified=self.display_verified,imageStats=self.image_stats())
     def stop_status(self):
         # Lets the browser that owned a session tell an unattended end (silence,
@@ -142,6 +157,9 @@ class Receiver:
         value=self.last_stop
         if not value:return None
         return {'session':value['session'],'reason':value['reason'],'secondsAgo':min(10**7,max(0,int(time.monotonic()-value['at'])))}
+    def browser_silence(self):
+        if not self.active or not self.had_viewer:return 0
+        return min(10**7,max(0,int(time.monotonic()-self.last_heartbeat)))
     def seen(self):
         # Any authenticated request for the live session proves a browser is
         # still there; a heartbeat is not the only evidence.
@@ -364,6 +382,7 @@ class Receiver:
             try:queue.put_nowait(None)
             except asyncio.QueueFull:pass
         self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
+        self.cancel_pending_flush()
         if self.capture:self.capture.close();self.capture=None
         self.log('native_stop',reason=reason,frames=self.frames,sessionTag=tag,lifetimeMs=lifetime,heartbeatAgeMs=heartbeat_age,stalls=self.stalls,stallSeconds=round(self.stall_seconds,1))
         return True
@@ -587,6 +606,7 @@ class Receiver:
             if self.active and generation==self.generation:asyncio.create_task(self.stop('native_event_disconnected',generation=generation))
     def reset_video_history(self):
         self.video_keyframes=[];self.video_ticks=0;self.video_gop_bytes=0;self.video_last_idr_at=0
+        self.video_last_ts=None;self.video_ts_offset=0;self.video_rebases=0
     async def request_keyframe(self,generation,reason):
         need(self.active and generation==self.generation,'Stale native session')
         now=time.monotonic();since=now-self.last_keyframe_request
@@ -624,37 +644,69 @@ class Receiver:
             self.log('video_rate',bps=self.video_bps,budget=self.video_budget.bps,queue_bytes=max((s['bytes'] for s in self.viewers.values()),default=0),native_budget=budget_status(),audio_policy=audio_route_status())
             self.video_rate_bytes=0;self.video_rate_at=now
         key=keyframe(data)
+        # One native frame whose time did not advance used to end the whole
+        # session ("next timestamp", November 15). Only differences between
+        # timestamps reach the browser, so the timeline is shifted instead.
+        timestamp+=self.video_ts_offset
+        if self.video_last_ts is not None and timestamp<=self.video_last_ts:
+            shift=self.video_last_ts-timestamp+33333;self.video_ts_offset+=shift;timestamp+=shift;self.video_rebases+=1
+            if self.video_rebases==1 or self.video_rebases%100==0:self.log('video_timestamp_rebased',count=self.video_rebases,shiftMicros=min(shift,10**12))
+        self.video_last_ts=timestamp
         owner=self.images
         if owner and self.image_current(owner,self.generation):
             try:owner['decoder'].feed(data,timestamp)
             except Exception as e:
                 self.image_error=str(e)[:256];self.log('image_feed_error',error=self.image_error);self.invalidate_images('feed_error')
+        self.cancel_pending_flush()
         if self.pending:
-            old,ts,oldkey=self.pending;fragment=self.muxer.fragment(old,ts,timestamp)
-            if fragment:
-                ticks=(ts-self.muxer.base)*90000//1000000
-                self.video_ticks=(timestamp-self.muxer.base)*90000//1000000
-                if oldkey:
-                    self.video_keyframes.append(ticks);self.video_keyframes=self.video_keyframes[-32:]
-                    self.video_gop_bytes=0;self.video_last_idr_at=time.monotonic()
-                self.video_gop_bytes+=len(old)
-                if self.capture and self.capture_bytes+len(fragment)<=32*1024*1024:self.capture.write(fragment);self.capture_bytes+=len(fragment)
-                for q,state in list(self.viewers.items()):
-                    if state['closed'] or state['session']!=self.generation:continue
-                    if not state['ready']:
-                        if not oldkey:continue
-                        # The initialization segment is sent once per response;
-                        # a resynchronized viewer resumes with the IDR alone.
-                        fragment_out=fragment if state.get('initialized') else self.initial+fragment
-                        state['ready']=True;state['awaiting_key']=None
-                    else:fragment_out=fragment
-                    if state['bytes']+len(fragment_out)>2*1024*1024 or q.full():
-                        reason='queue_limit' if q.full() else 'byte_limit'
-                        if self.resync_viewer(q,state,reason):continue
-                        state['closed']=True;self.log('video_viewer_dropped',reason=reason,queued_bytes=state['bytes'],queued_fragments=q.qsize());continue
-                    state['bytes']+=len(fragment_out);q.put_nowait(fragment_out)
+            old,ts,oldkey=self.pending;self.pending=None
+            self.emit(old,ts,oldkey,timestamp,timestamp)
         self.pending=(data,timestamp,key);self.frames+=1
+        self.schedule_pending_flush()
         if self.frames<4 or self.frames%300==0:self.log('native_frame',frames=self.frames)
+    def emit(self,old,ts,oldkey,next_ts,newest_ts):
+        """Send one frame to every ready viewer. newest_ts is the latest frame held here."""
+        fragment=self.muxer.fragment(old,ts,next_ts)
+        if not fragment:return
+        ticks=(ts-self.muxer.base)*90000//1000000
+        self.video_ticks=(newest_ts-self.muxer.base)*90000//1000000
+        if oldkey:
+            self.video_keyframes.append(ticks);self.video_keyframes=self.video_keyframes[-32:]
+            self.video_gop_bytes=0;self.video_last_idr_at=time.monotonic()
+        self.video_gop_bytes+=len(old)
+        if self.capture and self.capture_bytes+len(fragment)<=32*1024*1024:self.capture.write(fragment);self.capture_bytes+=len(fragment)
+        for q,state in list(self.viewers.items()):
+            if state['closed'] or state['session']!=self.generation:continue
+            if not state['ready']:
+                if not oldkey:continue
+                # The initialization segment is sent once per response;
+                # a resynchronized viewer resumes with the IDR alone.
+                fragment_out=fragment if state.get('initialized') else self.initial+fragment
+                state['ready']=True;state['awaiting_key']=None
+            else:fragment_out=fragment
+            if state['bytes']+len(fragment_out)>2*1024*1024 or q.full():
+                reason='queue_limit' if q.full() else 'byte_limit'
+                if self.resync_viewer(q,state,reason):continue
+                state['closed']=True;self.log('video_viewer_dropped',reason=reason,queued_bytes=state['bytes'],queued_fragments=q.qsize());continue
+            state['bytes']+=len(fragment_out);q.put_nowait(fragment_out)
+    def cancel_pending_flush(self):
+        timer=self.pending_timer;self.pending_timer=None
+        if timer:timer.cancel()
+    def schedule_pending_flush(self):
+        # Canvas viewers decode each frame as it arrives and ignore sample
+        # durations. A MediaSource viewer needs exact durations (a gap stalls
+        # its timeline), so with one attached the frame waits as before.
+        states=[state for state in self.viewers.values() if not state.get('closed')]
+        if not states or not all(state.get('continuous_decode') for state in states):return
+        try:loop=asyncio.get_running_loop()
+        except RuntimeError:return
+        self.pending_timer=loop.call_later(PENDING_FLUSH_SECONDS,self.flush_pending,self.generation,self.pending)
+    def flush_pending(self,generation,expected):
+        self.pending_timer=None
+        if generation!=self.generation or self.pending is not expected or not self.muxer:return
+        old,ts,oldkey=expected;self.pending=None
+        try:self.emit(old,ts,oldkey,ts+NOMINAL_FRAME_MICROS,ts)
+        except Exception as e:self.log('video_flush_error',error=str(e)[:256])
     def resync_viewer(self,q,state,reason):
         """Discard unsent video and resume this response at the next keyframe.
 
@@ -674,7 +726,7 @@ class Receiver:
             else:dropped+=len(item)
         for item in kept:q.put_nowait(item)
         if kept:return False
-        state['bytes']=0;state['ready']=False;state['awaiting_key']=now;state['resyncs']=recent+[now]
+        state['bytes']=0;state['ready']=False;state['awaiting_key']=now;state['joined']=now;state['resyncs']=recent+[now]
         self.log('video_viewer_resync',reason=reason,dropped_bytes=dropped,blocked=bool(state.get('draining')),recent=len(recent)+1)
         # While the socket is blocked a new IDR would only queue behind it; the
         # viewer asks when its write completes. The ticker covers a lost request.
@@ -752,12 +804,19 @@ class Receiver:
             need(stopped,'Stale native session');return self.status()
         if action=='heartbeat':
             now=time.monotonic();self.last_heartbeat=now;self.had_viewer=True
-            link=value.get('link',value.get('browser'));queued=max((s.get('bytes',0) for s in self.viewers.values() if not s.get('closed')),default=0)
+            link=value.get('link',value.get('browser'));live=[(q,s) for q,s in self.viewers.items() if not s.get('closed')]
+            queued=max((s.get('bytes',0) for q,s in live),default=0);fragments=max((q.qsize() for q,s in live if hasattr(q,'qsize')),default=0)
+            # Lag only describes a stream that is attached and past its keyframe.
+            # A viewer that just joined or resynchronized has not shown one yet,
+            # and a browser back from suspension reports minutes of "lag" before
+            # it has reattached at all. Neither is a slow link.
+            if live:settling=any(s.get('awaiting_key') or now-s.get('joined',-float('inf'))<8 for q,s in live)
+            else:settling=True
             measured=self.current_video_bps(now)
-            before=self.video_budget.bps;reason=self.video_budget.feedback(link,now,queued_bytes=queued,measured_bps=measured)
+            before=self.video_budget.bps;reason=self.video_budget.feedback(link,now,queued_bytes=queued,measured_bps=measured,queued_fragments=fragments,settling=settling)
             if reason and isinstance(link,dict):
-                self.log('video_budget',reason=reason,bps=self.video_budget.bps,previous=before,queuedBytes=queued,measuredBps=measured,
-                         heartbeatRttMs=link.get('heartbeatRttMs'),streamLagMs=link.get('streamLagMs'))
+                self.log('video_budget',reason=reason,bps=self.video_budget.bps,previous=before,queuedBytes=queued,queuedFragments=fragments,measuredBps=measured,
+                         limitBps=self.video_budget.limit,holdSeconds=self.video_budget.hold,heartbeatRttMs=link.get('heartbeatRttMs'),streamLagMs=link.get('streamLagMs'))
             self.browser_metrics(value.get('browser'));return self.status()
         if action=='touch':return await self.touch(value)
         if action=='prepare' and local:await self.prepare();return self.status()
@@ -980,10 +1039,18 @@ class Receiver:
             if generation==self.generation:self.image_error=str(e)[:256]
             raise
         finally:self.image_waiters-=1
+    def tune_video_socket(self,writer):
+        try:
+            sock=writer.get_extra_info('socket')
+            if sock is not None:sock.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF,VIDEO_SEND_BUFFER)
+            transport=getattr(writer,'transport',None)
+            if transport is not None:transport.set_write_buffer_limits(high=VIDEO_WRITE_HIGH,low=VIDEO_WRITE_HIGH//4)
+        except (OSError,AttributeError,TypeError,ValueError) as e:self.log('video_socket_tuning_failed',error=str(e)[:128])
     async def viewer(self,writer,reader=None,response_headers=None,continuous_decode=False):
         need(self.active and self.video and self.muxer,'Native video is not ready')
         if len(self.viewers)>=2:raise HTTPBusyError('Two viewers are already connected')
-        q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation,'continuous_decode':continuous_decode,'initialized':False,'draining':False,'awaiting_key':time.monotonic(),'resyncs':[]};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
+        q=asyncio.Queue(maxsize=VIDEO_QUEUE_FRAGMENTS);state={'ready':False,'bytes':0,'closed':False,'session':self.generation,'continuous_decode':continuous_decode,'initialized':False,'draining':False,'awaiting_key':time.monotonic(),'joined':time.monotonic(),'resyncs':[]};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
+        self.tune_video_socket(writer)
         try:
             response_phase(writer,'video_headers')
             writer.write(self.stream_headers('video/mp4',response_headers));await asyncio.wait_for(writer.drain(),3)

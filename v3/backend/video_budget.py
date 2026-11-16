@@ -19,51 +19,70 @@ VIDEO_READY_REASONS={
 class VideoBudget:
     """Encoder budget driven by evidence that video is not getting through.
 
-    Beta 5 cut 35% whenever one heartbeat round trip exceeded 450 ms. In the
-    owner's November 2026 log 45 of 51 cuts happened with nothing waiting to be
-    sent and 40 while the stream used under 80% of its budget: a fresh-connection
-    heartbeat measures request latency (and this service's own stalls), not
-    capacity. Late pictures and unsent video are the congestion signals. A slow
-    heartbeat alone needs repetition and a stream that is actually near budget.
+    Beta 5 cut 35% whenever one heartbeat round trip exceeded 450 ms: 45 of 51
+    cuts in the owner's first log had nothing waiting to be sent. Beta 6 cut on
+    late pictures and unsent video instead, but cut the budget rather than the
+    stream. On the November 15 drive the encoder was sending 1.3-1.6 Mbps under
+    a 2.1-3.0 Mbps budget when the link congested, so a 35% budget cut changed
+    nothing and the same congestion returned: 18 cuts in 20 minutes, each a
+    visible stutter. A cut now starts from what is actually being sent, and the
+    rate that congested is remembered before it is approached again.
     """
-    CEILING=3000000;FLOOR=750000;BACKLOG_BYTES=192*1024
+    CEILING=3000000;FLOOR=750000;BACKLOG_BYTES=192*1024;BACKLOG_FRAGMENTS=20;IDLE_BPS=100000
     def __init__(self):
         self.bps=self.CEILING;self.last=-float('inf');self.healthy_since=None
-        self.cut_at=-float('inf');self.slow=0;self.recover_to=0;self.reason=''
-    def cut(self,now,factor,reason):
+        self.cut_at=-float('inf');self.slow=0;self.reason=''
+        # limit: the sending rate at the last congestion. While it is held the
+        # budget stays under it; afterwards it is probed slowly. A probe that
+        # fails soon after release doubles the next hold.
+        self.limit=0;self.limit_at=-float('inf');self.hold=120;self.released_at=-float('inf')
+    def cut(self,now,factor,reason,measured=None):
         # One reduction per congestion event: the encoder and the queued video
         # need a few seconds to reflect it before the same lag is counted again.
         self.healthy_since=None
         if now-self.cut_at<4 or self.bps<=self.FLOOR:return None
-        # Remember where the episode started so recovery can return quickly to
-        # a rate that worked, then probe slowly beyond it.
-        if now-self.cut_at>15:self.recover_to=max(self.FLOOR,int(self.bps*.7))
-        self.cut_at=now;self.slow=0;self.bps=max(self.FLOOR,int(self.bps*factor));self.reason=reason
+        base=self.bps
+        if type(measured) in (int,float) and math.isfinite(measured) and self.FLOOR<=measured<base:base=int(measured)
+        if self.released_at is not None:
+            self.hold=min(600,self.hold*2) if self.limit and now-self.released_at<90 else 120
+        self.limit=base;self.limit_at=now;self.released_at=None
+        self.cut_at=now;self.slow=0;self.bps=max(self.FLOOR,int(base*factor));self.reason=reason
         return reason
-    def feedback(self,value,now,queued_bytes=0,measured_bps=None):
+    def feedback(self,value,now,queued_bytes=0,measured_bps=None,queued_fragments=0,settling=False):
         """Apply one browser report. Returns the reason when the budget changed."""
         if not isinstance(value,dict) or value.get('hidden') is True:return None
         rtt,lag=value.get('heartbeatRttMs'),value.get('streamLagMs')
         if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in (rtt,lag)):return None
         if now-self.last<1.5:return None
         self.last=now
+        number=lambda v:type(v) in (int,float) and math.isfinite(v)
         presented=value.get('frameReady') is not False
-        backlog=type(queued_bytes) in (int,float) and queued_bytes>=self.BACKLOG_BYTES
+        backlog=(number(queued_bytes) and queued_bytes>=self.BACKLOG_BYTES) or (number(queued_fragments) and queued_fragments>=self.BACKLOG_FRAGMENTS)
+        # Lag is the newest native frame minus the last one shown. After a still
+        # screen, or while a viewer waits for its keyframe, that difference is
+        # the pause itself: two of beta 6's cuts were that, both in the first
+        # seconds of a session.
+        idle=number(measured_bps) and measured_bps<self.IDLE_BPS
         self.slow=self.slow+1 if rtt>450 else 0
-        if presented and lag>700:return self.cut(now,.65,'stream_lag')
-        if backlog:return self.cut(now,.65,'send_backlog')
+        if presented and lag>700 and not idle and not settling:return self.cut(now,.8,'stream_lag',measured_bps)
+        if backlog:return self.cut(now,.8,'send_backlog',measured_bps)
         if self.slow:
             self.healthy_since=None
-            near_budget=type(measured_bps) not in (int,float) or measured_bps>=self.bps*.6
-            if self.slow>=2 and near_budget:return self.cut(now,.85,'slow_link')
+            near_budget=not number(measured_bps) or measured_bps>=self.bps*.6
+            if self.slow>=2 and near_budget:return self.cut(now,.9,'slow_link',measured_bps)
             return None
         if presented and rtt<250 and lag<250:
             if self.healthy_since is None:self.healthy_since=now
-            fast=self.bps<self.recover_to
-            if self.bps<self.CEILING and now-self.healthy_since>=(6 if fast else 12):
-                step=max(150000,int(self.bps*.2)) if fast else 150000
-                self.bps=min(self.CEILING,self.bps+step);self.healthy_since=now-(2 if fast else 0)
-                self.reason='recovering' if fast else 'probing';return self.reason
+            holding=bool(self.limit) and now-self.limit_at<self.hold
+            if self.limit and not holding and self.released_at is None:self.released_at=now
+            if holding:
+                allowed=max(self.FLOOR,int(self.limit*.9))
+                if self.bps<allowed and now-self.healthy_since>=6:
+                    self.bps=min(allowed,max(self.bps+50000,int(self.bps*1.1)));self.healthy_since=now-2
+                    self.reason='recovering';return self.reason
+            elif self.bps<self.CEILING and now-self.healthy_since>=12:
+                self.bps=min(self.CEILING,self.bps+150000);self.healthy_since=now
+                self.reason='probing';return self.reason
         else:self.healthy_since=None
         return None
 

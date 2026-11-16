@@ -458,19 +458,32 @@ async function poll(){
 }
 if(hosted){
  const panel=document.querySelector('#connectionPanel'),input=document.querySelector('#endpoint'),button=document.querySelector('#connect');
- if(panel)panel.hidden=false;if(input)input.value=transport.diagnostics.endpoint;
- const label=document.querySelector('#buildLabel');if(label)label.textContent='CarDash V3 · Viewer 3';
+ // The Tesla suspends a shrunk browser and discards its page after a few
+ // minutes; enlarging it loads this page again with nothing connected. The
+ // address of a phone this browser reached before is remembered (never the
+ // token), so the page reconnects itself and rejoins a session still running.
+ const ENDPOINT_KEY='cardash.option1.endpoint';
+ const remembered=(()=>{try{const value=window.localStorage?.getItem(ENDPOINT_KEY)||'';return /^http:\/\/(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\/$/.test(value)?value:'';}catch(_){return '';}})();
+ if(panel)panel.hidden=false;if(input)input.value=remembered||transport.diagnostics.endpoint;
+ const label=document.querySelector('#buildLabel');if(label)label.textContent='CarDash V3 · Viewer 4';
  baseStatus='Connect to your iPhone to use the H.264 canvas renderer.';
- if(button)button.onclick=async()=>{
+ async function connectDevice(automatic){
   if(connectionBusy||changingOutput||changingLayout)return;
   const epoch=++commandEpoch;resumeSession=null;end();carplayActive=false;identityReady=false;blockedVideoSession=null;blockedVideoError='';
   if(typeof CarDashCanvas==='undefined'||!CarDashCanvas.available()){baseStatus='This browser does not support secure H.264 canvas decoding. No local connection was attempted.';renderStatus();return;}
-  connectionBusy=true;baseStatus='Connecting directly to your iPhone…';renderStatus();
-  try{await transport.connect(input.value);if(epoch===commandEpoch){connectionBusy=false;await poll();}}
-  catch(error){if(epoch===commandEpoch)baseStatus=error.message;}
-  finally{connectionBusy=false;renderStatus();}
- };
+  connectionBusy=true;baseStatus=automatic?'Reconnecting to your iPhone…':'Connecting directly to your iPhone…';renderStatus();
+  try{
+   await transport.connect(input.value);
+   if(epoch===commandEpoch){try{window.localStorage?.setItem(ENDPOINT_KEY,transport.diagnostics.endpoint);}catch(_){}connectionBusy=false;await poll();}
+  }catch(error){
+   // A browser may refuse a local request made without a tap. That is not
+   // an error to show: the Connect button still works exactly as before.
+   if(epoch===commandEpoch){if(automatic){transport.disconnect?.();baseStatus='Press Connect to reach your iPhone.';}else baseStatus=error.message;}
+  }finally{connectionBusy=false;renderStatus();}
+ }
+ if(button)button.onclick=()=>connectDevice(false);
  renderStatus();
+ if(remembered)connectDevice(true);
 }
 // In hosted mode poll() is inert until the user's Connect gesture succeeds.
 setInterval(heartbeat,2000);setInterval(poll,2000);poll();

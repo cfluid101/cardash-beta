@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Beta 6: survive link blips and service stalls without ending native CarPlay."""
+"""Beta 6/7: survive link blips, service stalls and a suspended browser without ending native CarPlay."""
 import asyncio
 import json
 from pathlib import Path
@@ -38,12 +38,14 @@ class Base(unittest.IsolatedAsyncioTestCase):
 
 class WatchdogTest(Base):
     async def test_brief_browser_silence_keeps_the_native_session(self):
-        # Beta 5 ended the session here (12 seconds); 13 of 15 logged sessions did.
-        for age in (13,35,89):
-            await self.tick(1000,age);self.r.stop.assert_not_awaited()
+        # Beta 5 ended the session at 12 seconds and beta 6 at 90. A shrunk Tesla
+        # browser is suspended for minutes: both November 15 "disconnects".
+        for age in (13,91,595,899):
+            await self.tick(2000,age);self.r.stop.assert_not_awaited()
+        self.assertEqual(server.BROWSER_GRACE_SECONDS,900)
 
     async def test_sustained_silence_still_ends_the_session(self):
-        await self.tick(1000,server.BROWSER_GRACE_SECONDS+1)
+        await self.tick(2000,server.BROWSER_GRACE_SECONDS+1)
         self.r.stop.assert_awaited_once_with('browser_timeout',generation='current')
 
     async def test_first_viewer_deadline_is_unchanged(self):
@@ -54,7 +56,7 @@ class WatchdogTest(Base):
     async def test_time_the_service_did_not_run_is_not_browser_silence(self):
         # The periodic task woke 60 seconds late: no heartbeat could have been
         # processed, so 100 seconds of apparent silence is 40 seconds of real silence.
-        await self.tick(1000,100,pulse_age=61)
+        await self.tick(2000,server.BROWSER_GRACE_SECONDS+10,pulse_age=61)
         self.r.stop.assert_not_awaited()
         stall=self.events('service_stall')
         self.assertEqual(len(stall),1);self.assertEqual(stall[0]['seconds'],60);self.assertTrue(stall[0]['active'])
@@ -62,7 +64,7 @@ class WatchdogTest(Base):
         self.assertEqual(self.r.status()['service'],{'stalls':1,'stallSeconds':60})
 
     async def test_stall_credit_cannot_hide_real_silence_or_move_contact_into_the_future(self):
-        await self.tick(1000,200,pulse_age=61)
+        await self.tick(2000,server.BROWSER_GRACE_SECONDS+100,pulse_age=61)
         self.r.stop.assert_awaited_once_with('browser_timeout',generation='current')
         r=self.r;r.last_heartbeat=999;r.pulse_at=900
         with patch('server.time.monotonic',return_value=1000):self.assertEqual(r.pulse(),99)
@@ -150,7 +152,7 @@ class KeepaliveTest(Base):
 
 class ResyncTest(Base):
     def viewer(self,continuous=True,queued=0):
-        r=self.r;q=asyncio.Queue(maxsize=90)
+        r=self.r;q=asyncio.Queue(maxsize=server.VIDEO_QUEUE_FRAGMENTS)
         state={'ready':True,'bytes':0,'closed':False,'session':'current','continuous_decode':continuous,'initialized':True,'draining':False,'awaiting_key':None,'resyncs':[]}
         for _ in range(queued):q.put_nowait(b'x'*100);state['bytes']+=100
         r.viewers[q]=state;return q,state
@@ -167,12 +169,12 @@ class ResyncTest(Base):
         await super().asyncSetUp();self.clock=0
 
     async def test_full_queue_resynchronizes_in_place_instead_of_closing(self):
-        r=self.r;q,state=self.viewer(queued=90)
+        r=self.r;q,state=self.viewer(queued=server.VIDEO_QUEUE_FRAGMENTS)
         self.feed();self.feed()
         self.assertFalse(state['closed']);self.assertFalse(state['ready']);self.assertEqual((q.qsize(),state['bytes']),(0,0))
         self.assertFalse(self.events('video_viewer_dropped'))
         resync=self.events('video_viewer_resync')
-        self.assertEqual((len(resync),resync[0]['reason'],resync[0]['dropped_bytes']),(1,'queue_limit',9000))
+        self.assertEqual((len(resync),resync[0]['reason'],resync[0]['dropped_bytes']),(1,'queue_limit',100*server.VIDEO_QUEUE_FRAGMENTS))
         await asyncio.sleep(0);r.command.assert_awaited_once_with(KEYFRAME,'current')
         # Delta frames are withheld; the next IDR resumes without a second
         # initialization segment, which the browser parser rejects.
@@ -182,7 +184,7 @@ class ResyncTest(Base):
         first=q.get_nowait();self.assertTrue(first.startswith(b'F\x00\x00\x00\x02\x65'));self.assertNotIn(b'INIT',first)
 
     async def test_viewer_flushed_before_its_first_write_still_receives_initialization(self):
-        q,state=self.viewer(queued=90);state['initialized']=False
+        q,state=self.viewer(queued=server.VIDEO_QUEUE_FRAGMENTS);state['initialized']=False
         self.feed();self.feed();self.feed(key=True);self.feed()
         self.assertTrue(q.get_nowait().startswith(b'INITF'))
 
@@ -192,26 +194,26 @@ class ResyncTest(Base):
         self.assertFalse(state['closed']);self.assertEqual(self.events('video_viewer_resync')[0]['reason'],'byte_limit')
 
     async def test_blocked_socket_defers_the_keyframe_until_it_can_carry_one(self):
-        r=self.r;q,state=self.viewer(queued=90);state['draining']=True
+        r=self.r;q,state=self.viewer(queued=server.VIDEO_QUEUE_FRAGMENTS);state['draining']=True
         self.feed();self.feed();await asyncio.sleep(0)
         r.command.assert_not_awaited();self.assertTrue(self.events('video_viewer_resync')[0]['blocked'])
 
     async def test_persistent_overflow_falls_back_to_closing(self):
-        q,state=self.viewer(queued=90)
+        q,state=self.viewer(queued=server.VIDEO_QUEUE_FRAGMENTS)
         for _ in range(4):
             self.feed();self.feed();state['ready']=True
-            for _ in range(90):q.put_nowait(b'x')
+            for _ in range(server.VIDEO_QUEUE_FRAGMENTS):q.put_nowait(b'x')
         self.assertFalse(state['closed']);self.assertEqual(len(self.events('video_viewer_resync')),4)
         self.feed();self.feed()
         self.assertTrue(state['closed']);self.assertEqual(len(self.events('video_viewer_dropped')),1)
 
     async def test_media_source_viewer_keeps_the_closing_behavior(self):
-        q,state=self.viewer(continuous=False,queued=90)
+        q,state=self.viewer(continuous=False,queued=server.VIDEO_QUEUE_FRAGMENTS)
         self.feed();self.feed()
         self.assertTrue(state['closed']);self.assertFalse(self.events('video_viewer_resync'))
 
     async def test_shutdown_sentinel_is_never_discarded(self):
-        q,state=self.viewer(queued=89);q.put_nowait(None)
+        q,state=self.viewer(queued=server.VIDEO_QUEUE_FRAGMENTS-1);q.put_nowait(None)
         self.feed();self.feed()
         self.assertTrue(state['closed']);self.assertIsNone(q.get_nowait())
 
@@ -253,11 +255,119 @@ class ResyncTest(Base):
         eof[0]=True;q.put_nowait(None);await asyncio.wait_for(task,2)
 
 
+class LastFrameTest(Base):
+    """iOS sends nothing while the screen is still; the newest frame must not wait for the next change."""
+    def setUp(self):self.sent=[]
+    def attach(self,continuous=True):
+        r=self.r;q=asyncio.Queue(maxsize=60)
+        r.viewers[q]={'ready':True,'bytes':0,'closed':False,'session':'current','continuous_decode':continuous,'initialized':True,'draining':False,'awaiting_key':None,'resyncs':[]}
+        def fragment(data,ts,nxt):self.sent.append((ts,nxt));return b'F'+data
+        r.muxer=types.SimpleNamespace(base=0,fragment=fragment);r.initial=b'INIT';return q
+
+    async def test_last_frame_of_a_change_is_sent_without_waiting_for_the_next(self):
+        r=self.r;q=self.attach()
+        r.frame(b'\x00\x00\x00\x02\x41\x01',1000000);r.frame(b'\x00\x00\x00\x02\x41\x02',1033333)
+        self.assertEqual(q.qsize(),1);self.assertEqual(self.sent,[(1000000,1033333)])
+        await asyncio.sleep(server.PENDING_FLUSH_SECONDS+.05)
+        # The second frame went out on its own, with a nominal duration, and the
+        # timeline the browser compares itself with is that frame, not a later one.
+        self.assertEqual(q.qsize(),2);self.assertEqual(self.sent[-1],(1033333,1033333+server.NOMINAL_FRAME_MICROS))
+        self.assertIsNone(r.pending);self.assertEqual(r.video_ticks,1033333*90000//1000000)
+        # The next change is not sent twice and keeps its own time.
+        r.frame(b'\x00\x00\x00\x02\x41\x03',9000000);self.assertEqual(q.qsize(),2)
+        await asyncio.sleep(server.PENDING_FLUSH_SECONDS+.05)
+        self.assertEqual(q.qsize(),3);self.assertEqual(self.sent[-1][0],9000000)
+
+    async def test_continuous_frames_keep_exact_durations_and_are_never_flushed_early(self):
+        r=self.r;q=self.attach()
+        for index in range(5):
+            r.frame(b'\x00\x00\x00\x02\x41\x01',1000000+index*33333);await asyncio.sleep(.005)
+        self.assertEqual(self.sent,[(1000000+i*33333,1000000+(i+1)*33333) for i in range(4)])
+
+    async def test_media_source_viewer_keeps_waiting_for_the_next_frame(self):
+        r=self.r;q=self.attach(continuous=False)
+        r.frame(b'\x00\x00\x00\x02\x41\x01',1000000)
+        await asyncio.sleep(server.PENDING_FLUSH_SECONDS+.05)
+        self.assertEqual(q.qsize(),0);self.assertIsNotNone(r.pending);self.assertIsNone(r.pending_timer)
+
+    async def test_no_viewer_or_a_stopped_session_sends_nothing_late(self):
+        r=self.r;r.muxer=types.SimpleNamespace(base=0,fragment=lambda *a:self.sent.append(a) or b'F')
+        r.frame(b'\x00\x00\x00\x02\x41\x01',1000000);self.assertIsNone(r.pending_timer)
+        q=self.attach();r.frame(b'\x00\x00\x00\x02\x41\x01',2000000);count=len(self.sent)
+        r.generation='another'
+        await asyncio.sleep(server.PENDING_FLUSH_SECONDS+.05)
+        self.assertEqual(len(self.sent),count)
+
+    async def test_time_that_does_not_advance_shifts_the_timeline_instead_of_ending_the_session(self):
+        # "video_error: next timestamp" ended a session after 8 seconds on November 15.
+        r=self.r;q=self.attach()
+        r.frame(b'\x00\x00\x00\x02\x41\x01',5000000);r.frame(b'\x00\x00\x00\x02\x41\x02',5000000)
+        r.frame(b'\x00\x00\x00\x02\x41\x03',1000);r.frame(b'\x00\x00\x00\x02\x41\x04',34333)
+        times=[ts for ts,_ in self.sent]
+        self.assertEqual(times,sorted(set(times)));self.assertTrue(all(nxt>ts for ts,nxt in self.sent))
+        # After the jump the native spacing (33.333 ms) is preserved.
+        self.assertEqual(self.sent[-1][1]-self.sent[-1][0],33333)
+        self.assertEqual(r.video_rebases,2);self.assertEqual(len(self.events('video_timestamp_rebased')),1)
+        # A new video configuration starts a new timeline.
+        r.reset_video_history();self.assertEqual((r.video_last_ts,r.video_ts_offset,r.video_rebases),(None,0,0))
+
+    async def test_real_muxer_accepts_a_flushed_frame_followed_by_a_later_one(self):
+        from h264_fixture import configuration
+        from media import Muxer
+        r=self.r;q=self.attach();r.muxer=Muxer(configuration(),1088,846)
+        key=bytes.fromhex('000000026501');delta=bytes.fromhex('000000024101')
+        r.frame(key,1000000);await asyncio.sleep(server.PENDING_FLUSH_SECONDS+.05)
+        r.frame(delta,1005000);r.frame(delta,7000000);await asyncio.sleep(server.PENDING_FLUSH_SECONDS+.05)
+        self.assertEqual(q.qsize(),3);self.assertFalse(self.events('video_flush_error'))
+
+
+class VideoSocketTest(Base):
+    async def test_video_response_gets_a_small_send_buffer(self):
+        import socket
+        r=self.r;calls=[];limits=[]
+        sock=types.SimpleNamespace(setsockopt=lambda *a:calls.append(a))
+        writer=types.SimpleNamespace(get_extra_info=lambda name:sock if name=='socket' else None,transport=types.SimpleNamespace(set_write_buffer_limits=lambda **k:limits.append(k)))
+        r.tune_video_socket(writer)
+        self.assertEqual(calls,[(socket.SOL_SOCKET,socket.SO_SNDBUF,server.VIDEO_SEND_BUFFER)])
+        self.assertEqual(limits,[{'high':server.VIDEO_WRITE_HIGH,'low':server.VIDEO_WRITE_HIGH//4}])
+        self.assertLessEqual(server.VIDEO_SEND_BUFFER,128*1024)
+
+    async def test_a_socket_that_refuses_tuning_still_streams(self):
+        r=self.r
+        def refuse(*a):raise OSError(22,'Invalid argument')
+        r.tune_video_socket(types.SimpleNamespace(get_extra_info=lambda name:types.SimpleNamespace(setsockopt=refuse)))
+        r.tune_video_socket(types.SimpleNamespace())
+        self.assertEqual(len(self.events('video_socket_tuning_failed')),2)
+
+    async def test_real_connection_reports_the_requested_buffer(self):
+        import socket
+        r=self.r;seen={}
+        async def handle(reader,writer):
+            r.tune_video_socket(writer);seen['size']=writer.get_extra_info('socket').getsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF)
+            seen['limits']=writer.transport.get_write_buffer_limits();writer.close()
+        listener=await asyncio.start_server(handle,'127.0.0.1',0)
+        port=listener.sockets[0].getsockname()[1]
+        reader,writer=await asyncio.open_connection('127.0.0.1',port);await reader.read();writer.close()
+        listener.close();await listener.wait_closed()
+        self.assertEqual(seen['size'],server.VIDEO_SEND_BUFFER);self.assertEqual(seen['limits'],(server.VIDEO_WRITE_HIGH//4,server.VIDEO_WRITE_HIGH))
+        self.assertFalse(self.events('video_socket_tuning_failed'))
+
+
+class PresenceStatusTest(Base):
+    async def test_status_reports_viewers_and_how_long_the_browser_has_been_silent(self):
+        r=self.r;r.started=time.monotonic()-500;r.last_heartbeat=time.monotonic()-125
+        r.viewers={object():{'closed':False},object():{'closed':True}}
+        status=r.status()
+        self.assertEqual(status['viewers'],1);self.assertIn(status['browserSilentSeconds'],(125,126))
+        r.had_viewer=False;self.assertEqual(r.status()['browserSilentSeconds'],0)
+        r.had_viewer=True;r.active=False;self.assertEqual(r.status()['browserSilentSeconds'],0)
+
+
 class StopStatusTest(unittest.IsolatedAsyncioTestCase):
     async def test_status_reports_why_and_which_session_ended(self):
         with tempfile.TemporaryDirectory() as folder:
             r=Receiver(types.SimpleNamespace(state=folder,port=0,capture=None,helper='/unused'))
-            self.assertIsNone(r.status()['lastStop']);self.assertEqual(r.status()['browserGraceSeconds'],90)
+            self.assertIsNone(r.status()['lastStop']);self.assertEqual(r.status()['browserGraceSeconds'],900)
             r.active=True;r.generation='abc';r.started=r.last_heartbeat=time.monotonic()
             await r.stop('browser_timeout')
             value=r.status()['lastStop']
