@@ -52,4 +52,4 @@ Keeping the session alive removes the restart that triggered it on this drive. P
 
 ## Verification
 
-256 V3 Python, native-harness and package tests and 110 viewer JavaScript tests pass on the build host, including new cases for the 15-minute wait, last-frame flush, timestamp shift, send-buffer size on a real socket, the reworked bitrate rules and viewer auto-reconnect. Backend sources compile under Python 3.9. No device test.
+255 V3 Python, native-harness and package tests and 110 viewer JavaScript tests pass on the build host, including new cases for the 15-minute wait, last-frame flush, timestamp shift, send-buffer size on a real socket, the reworked bitrate rules and viewer auto-reconnect. Backend sources compile under Python 3.9. No device test.
