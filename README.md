@@ -1,3 +1,16 @@
+# Viewer 4 — November 16, 2026
+
+**Beta 7 package:** https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.7 (pre-release; not yet run on a phone or in a car).
+
+Refresh https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=4 to load it. The controls header says Viewer 4. It works with the packages already installed.
+
+- The page remembers the address of the phone it last reached, in this browser only and never the token. When the Tesla reloads the page, which it does after the browser has been shrunk for a few minutes, the page reconnects by itself and rejoins a session that is still running, without Connect or Start. If the browser refuses a local request made without a tap, the page says to press Connect and the button works as before.
+- Everything else is unchanged from Viewer 3.
+
+The beta 7 package is what keeps the session running: a browser that has shown CarPlay may be silent for 15 minutes (was 90 seconds), because the Tesla suspends a shrunk browser completely. It also limits the phone's video send buffer to 64 KB, sends the newest frame 40 ms after it arrives instead of holding it for the next one, and cuts bitrate from the rate actually being sent while remembering the rate that congested. Pressing Start while music is already playing can still move that music to the CarPlay output; that is not fixed. Details and the log evidence behind each change: [BETA-7.md](https://github.com/cfluid101/cardash-beta/blob/6853363594803a3c4c62ae69e226ea82bbf86cd2/v3/BETA-7.md).
+
+131 JavaScript tests pass (110 viewer, 21 reference receiver). **Neither Viewer 4 nor the beta 7 package has been run on a phone or in a car yet.** Script digests and the source commit are in option1/viewer-version.json. Earlier immutable script versions remain available for cached pages and rollback.
+
 # Viewer 3 — November 15, 2026
 
 **Beta 6 package:** https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.6 (pre-release; not yet run on a phone or in a car).
