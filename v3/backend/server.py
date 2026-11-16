@@ -18,6 +18,7 @@ import math
 import os
 from pathlib import Path
 import plistlib
+import resource
 import signal
 import stat
 import socket
@@ -39,9 +40,20 @@ from compatibility import inventory_status, inspect_session_helper
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.5-https.3-open.2'
+VERSION='3.0.0-beta.6'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
+# A browser that has shown CarPlay may be silent this long before its native
+# session ends. Beta 5 used 12 seconds: in the owner's November 2026 log 13 of
+# 15 sessions ended that way, several with the browser back within 5 seconds
+# and needing a manual Start. The session, pairing and audio survive a blip.
+BROWSER_GRACE_SECONDS=90
+FIRST_VIEWER_SECONDS=45
+KEEPALIVE_SECONDS=1
+# A periodic task this late means the whole service did not run (CPU/memory
+# starvation or a blocking call). The same log shows 13-46 second stalls.
+STALL_SECONDS=1.5
+VIDEO_DRAIN_SECONDS=10
 
 class HTTPBusyError(ValueError):
     status=503
@@ -81,6 +93,8 @@ class Receiver:
         self.inspection_lock=asyncio.Lock()
         self.images=None;self.image_lock=asyncio.Lock();self.image_waiters=0;self.image_epoch=0;self.image_close_tasks=set();self.image_error='';self.image_sequence=0
         self.helper=None;self.active=False;self.started=0;self.last_heartbeat=0;self.had_viewer=False
+        self.pulse_at=time.monotonic();self.pulse_cpu=time.process_time();self.stalls=0;self.stall_seconds=0;self.startup_credit=0
+        self.last_stop=None
         self.error='';self.native_error='';self.native={};self.frames=0;self.codec=None;self.muxer=None;self.pending=None
         self.control=None;self.event=None;self.video=None;self.pair=None;self.screen_key=None;self.ec=None
         self.viewers={};self.connections=set();self.sequence=0;self.native_watch=None;self.provisioning=False
@@ -104,8 +118,12 @@ class Receiver:
         self.log('service_started',version=VERSION)
     def log(self,event,**values):
         path=self.state/'diagnostic.ndjson'
-        if path.exists() and path.stat().st_size>2*1024*1024:path.replace(self.state/'diagnostic.previous.ndjson')
-        with path.open('a') as f:f.write(json.dumps({'time':time.time(),'event':event,**values},separators=(',',':'))+'\n')
+        # A full or failing disk loses a diagnostic line; it must never take
+        # the watchdog, lease keepalive or a request handler down with it.
+        try:
+            if path.exists() and path.stat().st_size>2*1024*1024:path.replace(self.state/'diagnostic.previous.ndjson')
+            with path.open('a') as f:f.write(json.dumps({'time':time.time(),'event':event,**values},separators=(',',':'))+'\n')
+        except OSError:self.log_failures=getattr(self,'log_failures',0)+1
     def save_identity(self):
         tmp=self.identity_path.with_suffix('.tmp');fd=os.open(tmp,os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
         with os.fdopen(fd,'w') as f:json.dump(self.identity,f)
@@ -116,7 +134,59 @@ class Receiver:
         return dict(version=VERSION,active=self.active,session=self.generation,identityReady=self.ready(),preparing=self.provisioning,network=self.network.status,transport=transport_status(self.state),
                     nativeFrames=self.frames,codec=self.codec,videoContinuousDecode=True,videoBudget={**budget_status(),"targetBps":self.video_budget.bps,"measuredBps":self.video_bps},videoConnected=bool(self.video),eventConnected=bool(self.event),videoKeyframes=self.video_keyframes,videoTimelineTicks=self.video_ticks,
                     native=self.native,error=self.error,sessionSeconds=int(time.monotonic()-self.started) if self.active else 0,sessionLimitSeconds=None,
+                    browserGraceSeconds=BROWSER_GRACE_SECONDS,lastStop=self.stop_status(),service={'stalls':self.stalls,'stallSeconds':round(self.stall_seconds,1)},
                     audioSupported=True,audioOutput=self.audio_output,audioRouting=audio_route_status(),microphoneSupported=False,audio=[c.status() for c in self.audio_channels.values()],audioHistory=self.audio_history[-16:],audioDucked=self.audio_ducked,sourceWidth=self.display.width,sourceHeight=self.display.height,requestedViewport=self.display.viewport,actualSource=self.actual_source,displayVerified=self.display_verified,imageStats=self.image_stats())
+    def stop_status(self):
+        # Lets the browser that owned a session tell an unattended end (silence,
+        # native disconnect) from its own Stop, and resume without a manual Start.
+        value=self.last_stop
+        if not value:return None
+        return {'session':value['session'],'reason':value['reason'],'secondsAgo':min(10**7,max(0,int(time.monotonic()-value['at'])))}
+    def seen(self):
+        # Any authenticated request for the live session proves a browser is
+        # still there; a heartbeat is not the only evidence.
+        if self.active:self.last_heartbeat=time.monotonic()
+    def pulse(self,now=None):
+        """Called by every periodic task; measures time the service did not run."""
+        now=time.monotonic() if now is None else now
+        late=now-self.pulse_at-KEEPALIVE_SECONDS;cpu=time.process_time();used=cpu-self.pulse_cpu
+        self.pulse_at=now;self.pulse_cpu=cpu
+        if late<STALL_SECONDS:return 0
+        # Nothing a browser sent during the stall could be processed, so it is
+        # not browser silence, and native startup was not given that time.
+        self.stalls+=1;self.stall_seconds=min(10**9,self.stall_seconds+late)
+        if self.active:
+            self.last_heartbeat=min(now,self.last_heartbeat+late);self.startup_credit+=late
+        try:memory=round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1048576,1)
+        except (OSError,ValueError):memory=None
+        # cpuSeconds near `seconds`: this process was busy. Near zero: it was
+        # not scheduled or was blocked in the kernel.
+        self.log('service_stall',seconds=round(late,2),cpuSeconds=round(max(0,used),2),maxRssMb=memory,active=self.active,sessionTag=self.session_tag())
+        return late
+    def current_video_bps(self,now):
+        # video_bps is only recomputed when a frame arrives. On a still screen
+        # the last busy window would otherwise be reported for as long as
+        # nothing changes, and the stream would look as if it filled its budget.
+        if not self.frames:return None
+        elapsed=now-self.video_rate_at
+        return round(self.video_rate_bytes*8/elapsed) if elapsed>=5 else self.video_bps
+    def renew(self):
+        """Refresh the native leases and the helper's parent heartbeat. No awaits."""
+        self.audio_lease.refresh(self.audio_output=='phone')
+        self.video_lease.refresh(self.video_budget.bps)
+    async def keepalive(self):
+        # The ticker awaits commands and teardown. Leases and the helper
+        # heartbeat must not wait behind those: when the video lease lapsed in
+        # beta 5 the encoder left its budget (13 Mbps against 750 kbps).
+        while True:
+            await asyncio.sleep(KEEPALIVE_SECONDS)
+            # Nothing here may end this task: it is what keeps a session alive.
+            try:
+                self.pulse()
+                if not self.active:continue
+                self.renew()
+                if self.helper and self.helper.stdin:self.helper.stdin.write(b'H')
+            except Exception as e:self.log('keepalive_failed',error=str(e)[:256])
     def receiver_info(self):
         # iOS still requires complete CarPlay authentication/audio declarations.
         # The scoped native adapter preserves the phone route independently.
@@ -236,7 +306,7 @@ class Receiver:
             if self.capture:self.capture.close();self.capture=None
             self.generation=None
             raise
-        self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False
+        self.active=True;self.started=time.monotonic();self.last_heartbeat=self.started;self.had_viewer=False;self.startup_credit=0
         self.native_watch=asyncio.create_task(self.watch_helper(self.helper,self.generation))
         self.log('native_start',pid=self.helper.pid,sessionTag=self.session_tag(),audioOutput=self.audio_output,requestedViewport=self.display.viewport,display={'width':self.display.width,'height':self.display.height,'widthPhysical':260,'heightPhysical':self.display.physical_height});return self.status()
     async def watch_helper(self,child,generation):
@@ -275,6 +345,7 @@ class Receiver:
         lifetime=min(10**9,max(0,round((now-self.started)*1000))) if self.active else 0
         heartbeat_age=min(10**9,max(0,round((now-self.last_heartbeat)*1000))) if self.active else 0
         self.clear_leases()
+        if self.active and self.generation:self.last_stop={'session':self.generation,'reason':reason,'at':now}
         child=self.helper;self.helper=None;self.active=False;self.generation=None
         await self.close_images()
         if child and child.returncode is None:
@@ -294,7 +365,7 @@ class Receiver:
             except asyncio.QueueFull:pass
         self.control=self.event=self.video=None;self.pair=None;self.screen_key=None;self.ec=None;self.pending=None;self.last_pointer=None
         if self.capture:self.capture.close();self.capture=None
-        self.log('native_stop',reason=reason,frames=self.frames,sessionTag=tag,lifetimeMs=lifetime,heartbeatAgeMs=heartbeat_age)
+        self.log('native_stop',reason=reason,frames=self.frames,sessionTag=tag,lifetimeMs=lifetime,heartbeatAgeMs=heartbeat_age,stalls=self.stalls,stallSeconds=round(self.stall_seconds,1))
         return True
     async def resize(self,value):
         # Validate before ending anything, then re-check generation under the
@@ -322,6 +393,7 @@ class Receiver:
         x,y,down=value.get('x'),value.get('y'),value.get('down')
         need(type(x) in (float,int) and type(y) in (float,int) and all(math.isfinite(v) and 0<=v<=1 for v in (x,y)) and type(down) is bool,'Touch coordinates invalid')
         need(self.frames>0,'Native video has not started')
+        self.seen()
         report=bytearray(12);report[6]=1;report[1]=int(down);struct.pack_into('<HH',report,2,round(x*self.display.width),round(y*self.display.height))
         seq=await self.command({'type':'hidSendReport','uuid':'2a2a2a2a','hidReport':bytes(report)},value['session'])
         self.log('native_touch',sequence=seq,x=x,y=y,down=down)
@@ -517,8 +589,14 @@ class Receiver:
         self.video_keyframes=[];self.video_ticks=0;self.video_gop_bytes=0;self.video_last_idr_at=0
     async def request_keyframe(self,generation,reason):
         need(self.active and generation==self.generation,'Stale native session')
-        now=time.monotonic()
-        if reason!='viewer_join' and now-self.last_keyframe_request<30:return False
+        now=time.monotonic();since=now-self.last_keyframe_request
+        # Every request restarts the hardware encoder. A joining viewer shares
+        # an IDR that was requested moments ago and has not been emitted yet;
+        # an overflowing viewer may ask at most every 5 seconds; routine
+        # long-GOP recovery keeps its 30 seconds.
+        if reason=='viewer_join':
+            if since<2 and self.video_last_idr_at<self.last_keyframe_request:return False
+        elif since<(5 if reason=='viewer_resync' else 30):return False
         # Set before the awaited command so concurrent demand cannot request a
         # burst of encoder restarts. A failed attempt also keeps this cooldown.
         self.last_keyframe_request=now
@@ -565,13 +643,46 @@ class Receiver:
                     if state['closed'] or state['session']!=self.generation:continue
                     if not state['ready']:
                         if not oldkey:continue
-                        fragment_out=self.initial+fragment;state['ready']=True
+                        # The initialization segment is sent once per response;
+                        # a resynchronized viewer resumes with the IDR alone.
+                        fragment_out=fragment if state.get('initialized') else self.initial+fragment
+                        state['ready']=True;state['awaiting_key']=None
                     else:fragment_out=fragment
                     if state['bytes']+len(fragment_out)>2*1024*1024 or q.full():
-                        state['closed']=True;self.log('video_viewer_dropped',reason='queue_limit' if q.full() else 'byte_limit',queued_bytes=state['bytes'],queued_fragments=q.qsize());continue
+                        reason='queue_limit' if q.full() else 'byte_limit'
+                        if self.resync_viewer(q,state,reason):continue
+                        state['closed']=True;self.log('video_viewer_dropped',reason=reason,queued_bytes=state['bytes'],queued_fragments=q.qsize());continue
                     state['bytes']+=len(fragment_out);q.put_nowait(fragment_out)
         self.pending=(data,timestamp,key);self.frames+=1
         if self.frames<4 or self.frames%300==0:self.log('native_frame',frames=self.frames)
+    def resync_viewer(self,q,state,reason):
+        """Discard unsent video and resume this response at the next keyframe.
+
+        Closing made the browser reconnect over the link that was already
+        behind (2-2.5 seconds each in the November 2026 log, and its own three
+        reconnects-per-minute limit then froze the display). Whole fragments
+        are discarded, so the byte stream the browser parses stays aligned.
+        """
+        if not state.get('continuous_decode'):return False
+        now=time.monotonic();recent=[t for t in state.get('resyncs',()) if now-t<60]
+        # Persistent overflow is not a blip; let the browser's bounded recovery decide.
+        if len(recent)>=4:return False
+        kept=[];dropped=0
+        while not q.empty():
+            item=q.get_nowait()
+            if item is None:kept.append(item)
+            else:dropped+=len(item)
+        for item in kept:q.put_nowait(item)
+        if kept:return False
+        state['bytes']=0;state['ready']=False;state['awaiting_key']=now;state['resyncs']=recent+[now]
+        self.log('video_viewer_resync',reason=reason,dropped_bytes=dropped,blocked=bool(state.get('draining')),recent=len(recent)+1)
+        # While the socket is blocked a new IDR would only queue behind it; the
+        # viewer asks when its write completes. The ticker covers a lost request.
+        if not state.get('draining'):asyncio.create_task(self.resync_keyframe(state['session']))
+        return True
+    async def resync_keyframe(self,generation):
+        try:return await self.request_keyframe(generation,'viewer_resync')
+        except Exception as e:self.log('keyframe_error',error=str(e)[:256]);return False
     async def video_client(self,reader,writer):
         if not self.screen_key or self.video:writer.close();return
         self.video=writer;parser=ScreenReceiver(self.screen_key,self.configure,self.frame);generation=self.generation;self.log('video_connected')
@@ -600,20 +711,19 @@ class Receiver:
     async def ticker(self):
         while True:
             await asyncio.sleep(2)
+            self.pulse()
             if not self.active:continue
             generation=self.generation
-            try:
-                self.audio_lease.refresh(self.audio_output=='phone')
-                self.video_lease.refresh(self.video_budget.bps)
+            try:self.renew()
             except OSError as e:
                 self.error='Audio route lease failed: '+str(e);self.log('audio_lease_failed',error=self.error)
                 await self.stop('audio_lease_failed',generation=generation);continue
-            failure=startup_failure(self.active,self.frames,self.started,time.monotonic(),self.native_error)
+            failure=startup_failure(self.active,self.frames,self.started+self.startup_credit,time.monotonic(),self.native_error)
             if failure:
                 self.error=failure;self.log('native_start_failed',error=failure,native=self.native)
                 await self.stop('native_start_failed',generation=generation);continue
             elapsed=time.monotonic()-self.last_heartbeat
-            if elapsed>(12 if self.had_viewer else 45):await self.stop('browser_timeout',generation=generation);continue
+            if elapsed>(BROWSER_GRACE_SECONDS if self.had_viewer else FIRST_VIEWER_SECONDS):await self.stop('browser_timeout',generation=generation);continue
             if self.helper and self.helper.stdin:
                 try:self.helper.stdin.write(b'H');await asyncio.wait_for(self.helper.stdin.drain(),1)
                 except (BrokenPipeError,ConnectionError,asyncio.TimeoutError):await self.stop('native_lease_failed',generation=generation);continue
@@ -625,6 +735,11 @@ class Receiver:
             if (any(not state.get('continuous_decode',False) and not state.get('closed',False) for state in self.viewers.values()) or self.images) and self.event and self.video_last_idr_at and (self.video_gop_bytes>8*1024*1024 or now-self.video_last_idr_at>30):
                 try:await self.request_keyframe(generation,'long_gop')
                 except Exception as e:self.log('keyframe_error',error=str(e))
+            # A viewer still waiting for its keyframe (the request was shared,
+            # throttled or lost) would otherwise wait for an IDR that an
+            # infinite-GOP encoder never sends.
+            elif self.event and any(state.get('awaiting_key') and not state.get('ready') and not state.get('closed') and not state.get('draining') and now-state['awaiting_key']>=2 for state in self.viewers.values()):
+                await self.resync_keyframe(generation)
     async def action(self,value,local=False):
         action=value.get('action')
         if action=='status':return self.status()
@@ -636,7 +751,14 @@ class Receiver:
             stopped=await self.stop(generation=None if local else value.get('session'))
             need(stopped,'Stale native session');return self.status()
         if action=='heartbeat':
-            self.last_heartbeat=time.monotonic();self.had_viewer=True;self.video_budget.feedback(value.get('link',value.get('browser')),time.monotonic());self.browser_metrics(value.get('browser'));return self.status()
+            now=time.monotonic();self.last_heartbeat=now;self.had_viewer=True
+            link=value.get('link',value.get('browser'));queued=max((s.get('bytes',0) for s in self.viewers.values() if not s.get('closed')),default=0)
+            measured=self.current_video_bps(now)
+            before=self.video_budget.bps;reason=self.video_budget.feedback(link,now,queued_bytes=queued,measured_bps=measured)
+            if reason and isinstance(link,dict):
+                self.log('video_budget',reason=reason,bps=self.video_budget.bps,previous=before,queuedBytes=queued,measuredBps=measured,
+                         heartbeatRttMs=link.get('heartbeatRttMs'),streamLagMs=link.get('streamLagMs'))
+            self.browser_metrics(value.get('browser'));return self.status()
         if action=='touch':return await self.touch(value)
         if action=='prepare' and local:await self.prepare();return self.status()
         if action=='import' and local:return await self.import_identity()
@@ -671,12 +793,14 @@ class Receiver:
             sock=writer.get_extra_info('socket');uid=ctypes.c_uint();gid=ctypes.c_uint();libc=ctypes.CDLL(None)
             need(libc.getpeereid(sock.fileno(),ctypes.byref(uid),ctypes.byref(gid))==0 and uid.value in (0,501),'Local peer denied')
             data=await asyncio.wait_for(reader.readline(),5);need(len(data)<=4096,'IPC size');value=json.loads(data)
-            result=await self.action(value,local=True);writer.write(json.dumps({'ok':True,**result}).encode()+b'\n');await writer.drain()
+            result=await self.action(value,local=True);reply={'ok':True,**result}
         except Exception as e:
-            self.log('local_request_rejected',error=str(e))
-            writer.write(json.dumps({'ok':False,'error':str(e)}).encode()+b'\n')
-            try:await writer.drain()
-            except (OSError,ConnectionError):pass
+            self.log('local_request_rejected',error=str(e));reply={'ok':False,'error':str(e)}
+        # The companion may have closed its socket while the request waited;
+        # that is not a rejected request and must not be recorded as one.
+        try:
+            writer.write(json.dumps(reply).encode()+b'\n');await asyncio.wait_for(writer.drain(),5)
+        except (OSError,ConnectionError,asyncio.TimeoutError):pass
         finally:writer.close()
     async def http(self,reader,writer):
         if len(self.connections)>=16:writer.close();return
@@ -722,7 +846,9 @@ class Receiver:
                 name='index.html' if path=='/' else path[1:];data=(ROOT.parent/'web'/name).read_bytes()
                 await self.reply(writer,200,data,'text/html' if path=='/' else 'text/javascript',{'Set-Cookie':f'cdv3={self.token}; HttpOnly; SameSite=Strict; Path=/'})
             elif not authenticated:await self.reply(writer,403,b'Open the CarDash page first','text/plain')
-            elif method=='GET' and path=='/api/status':await self.reply(writer,200,json.dumps(self.status()).encode(),extra=cors)
+            elif method=='GET' and path=='/api/status':
+                if self.had_viewer:self.seen()
+                await self.reply(writer,200,json.dumps(self.status()).encode(),extra=cors)
             elif method=='GET' and path=='/video':
                 need(self.active and headers.get('x-cardash-session')==self.generation,'Stale native session');await self.viewer(writer,reader,response_headers=cors,continuous_decode=headers.get('x-cardash-renderer')=='webcodecs')
             elif method=='GET' and path=='/image':await self.image_viewer(writer,headers.get('x-cardash-session'),headers.get('x-cardash-frame','0'),reader,response_headers=cors)
@@ -857,7 +983,7 @@ class Receiver:
     async def viewer(self,writer,reader=None,response_headers=None,continuous_decode=False):
         need(self.active and self.video and self.muxer,'Native video is not ready')
         if len(self.viewers)>=2:raise HTTPBusyError('Two viewers are already connected')
-        q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation,'continuous_decode':continuous_decode};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
+        q=asyncio.Queue(maxsize=90);state={'ready':False,'bytes':0,'closed':False,'session':self.generation,'continuous_decode':continuous_decode,'initialized':False,'draining':False,'awaiting_key':time.monotonic(),'resyncs':[]};self.viewers[q]=state;self.had_viewer=True;self.last_heartbeat=time.monotonic()
         try:
             response_phase(writer,'video_headers')
             writer.write(self.stream_headers('video/mp4',response_headers));await asyncio.wait_for(writer.drain(),3)
@@ -871,7 +997,15 @@ class Receiver:
                     if writer.is_closing() or (reader and reader.at_eof()):break
                     continue
                 if fragment is None or not self.active or state['session']!=self.generation or (reader and reader.at_eof()):break
-                state['bytes']-=len(fragment);response_phase(writer,'video_drain');writer.write(fragment);await asyncio.wait_for(writer.drain(),3)
+                state['bytes']=max(0,state['bytes']-len(fragment));response_phase(writer,'video_drain')
+                # The first item of a response always carries initialization.
+                state['initialized']=True;state['draining']=True
+                try:writer.write(fragment);await asyncio.wait_for(writer.drain(),VIDEO_DRAIN_SECONDS)
+                finally:state['draining']=False
+                # Accepted video is evidence of a present browser.
+                if state['session']==self.generation:self.seen()
+                # This response was resynchronized while its socket was blocked.
+                if not state['ready'] and state.get('awaiting_key') and self.active and state['session']==self.generation:await self.resync_keyframe(state['session'])
         finally:
             self.viewers.pop(q,None)
             # A retiring connection must not release a replacement viewer's contact.
@@ -899,9 +1033,9 @@ class Receiver:
             self.log('listening',port=self.args.port)
             startup_phase('ipc_listening')
             network_task=asyncio.create_task(self.network_monitor())
-            ticker=asyncio.create_task(self.ticker());stop=asyncio.Event();loop=asyncio.get_running_loop()
+            ticker=asyncio.create_task(self.ticker());keepalive=asyncio.create_task(self.keepalive());stop=asyncio.Event();loop=asyncio.get_running_loop()
             for sig in (signal.SIGTERM,signal.SIGINT):loop.add_signal_handler(sig,stop.set)
-            await stop.wait();ticker.cancel()
+            await stop.wait();ticker.cancel();keepalive.cancel()
         finally:
             if network_task:
                 network_task.cancel();await asyncio.gather(network_task,return_exceptions=True)

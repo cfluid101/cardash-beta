@@ -17,21 +17,55 @@ VIDEO_READY_REASONS={
 }
 
 class VideoBudget:
+    """Encoder budget driven by evidence that video is not getting through.
+
+    Beta 5 cut 35% whenever one heartbeat round trip exceeded 450 ms. In the
+    owner's November 2026 log 45 of 51 cuts happened with nothing waiting to be
+    sent and 40 while the stream used under 80% of its budget: a fresh-connection
+    heartbeat measures request latency (and this service's own stalls), not
+    capacity. Late pictures and unsent video are the congestion signals. A slow
+    heartbeat alone needs repetition and a stream that is actually near budget.
+    """
+    CEILING=3000000;FLOOR=750000;BACKLOG_BYTES=192*1024
     def __init__(self):
-        self.bps=3000000;self.last=-float('inf');self.healthy_since=None
-    def feedback(self,value,now):
-        if not isinstance(value,dict) or value.get('hidden') is True:return
+        self.bps=self.CEILING;self.last=-float('inf');self.healthy_since=None
+        self.cut_at=-float('inf');self.slow=0;self.recover_to=0;self.reason=''
+    def cut(self,now,factor,reason):
+        # One reduction per congestion event: the encoder and the queued video
+        # need a few seconds to reflect it before the same lag is counted again.
+        self.healthy_since=None
+        if now-self.cut_at<4 or self.bps<=self.FLOOR:return None
+        # Remember where the episode started so recovery can return quickly to
+        # a rate that worked, then probe slowly beyond it.
+        if now-self.cut_at>15:self.recover_to=max(self.FLOOR,int(self.bps*.7))
+        self.cut_at=now;self.slow=0;self.bps=max(self.FLOOR,int(self.bps*factor));self.reason=reason
+        return reason
+    def feedback(self,value,now,queued_bytes=0,measured_bps=None):
+        """Apply one browser report. Returns the reason when the budget changed."""
+        if not isinstance(value,dict) or value.get('hidden') is True:return None
         rtt,lag=value.get('heartbeatRttMs'),value.get('streamLagMs')
-        if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in (rtt,lag)):return
-        if now-self.last<1.5:return
+        if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in (rtt,lag)):return None
+        if now-self.last<1.5:return None
         self.last=now
-        if rtt>450 or (value.get('frameReady') is not False and lag>700):
-            self.bps=max(750000,int(self.bps*.65));self.healthy_since=None
-        elif value.get('frameReady') is not False and rtt<250 and lag<250:
+        presented=value.get('frameReady') is not False
+        backlog=type(queued_bytes) in (int,float) and queued_bytes>=self.BACKLOG_BYTES
+        self.slow=self.slow+1 if rtt>450 else 0
+        if presented and lag>700:return self.cut(now,.65,'stream_lag')
+        if backlog:return self.cut(now,.65,'send_backlog')
+        if self.slow:
+            self.healthy_since=None
+            near_budget=type(measured_bps) not in (int,float) or measured_bps>=self.bps*.6
+            if self.slow>=2 and near_budget:return self.cut(now,.85,'slow_link')
+            return None
+        if presented and rtt<250 and lag<250:
             if self.healthy_since is None:self.healthy_since=now
-            if now-self.healthy_since>=20:
-                self.bps=min(3000000,self.bps+150000);self.healthy_since=now
+            fast=self.bps<self.recover_to
+            if self.bps<self.CEILING and now-self.healthy_since>=(6 if fast else 12):
+                step=max(150000,int(self.bps*.2)) if fast else 150000
+                self.bps=min(self.CEILING,self.bps+step);self.healthy_since=now-(2 if fast else 0)
+                self.reason='recovering' if fast else 'probing';return self.reason
         else:self.healthy_since=None
+        return None
 
 class VideoBudgetLease(AudioLease):
     def refresh(self,bps):

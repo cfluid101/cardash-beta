@@ -39,7 +39,7 @@ static NSString *Addresses(){
  UIStackView *stack=[[UIStackView alloc]init];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=14;stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
  [NSLayoutConstraint activateConstraints:@[[scroll.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],[scroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:24],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-24],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:24],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-48]]];
  UILabel *title=[self label:@"CarDash V3" size:32];title.font=[UIFont systemFontOfSize:32 weight:UIFontWeightBold];[stack addArrangedSubview:title];
- [stack addArrangedSubview:[self label:@"Native CarPlay · HTTPS3 compatibility beta 1" size:17]];
+ [stack addArrangedSubview:[self label:@"Native CarPlay · Beta 6" size:17]];
  [stack addArrangedSubview:[self label:@"Native CarPlay video, touch and music/navigation audio. Sessions continue while connected. Microphone input, calls and Siri voice input are not supported in this beta." size:15]];
  self.status=[self label:@"Connecting to the V3 service…" size:16];[stack addArrangedSubview:self.status];
  self.prepare=[self button:@"Prepare CarPlay" action:@selector(prepareTapped)];[stack addArrangedSubview:self.prepare];
@@ -60,13 +60,17 @@ static NSString *Addresses(){
  self.prepare.enabled=!preparing&&!ready;self.start.enabled=ready&&!active&&!preparing;self.stop.enabled=active;
  [self.prepare setTitle:ready?@"Setup complete":preparing?@"Preparing…":@"Prepare CarPlay" forState:UIControlStateNormal];
  NSString *error=s[@"error"];
+ // Say why Start cannot work on this phone before anyone drives off with it.
+ NSDictionary *transport=[s[@"transport"] isKindOfClass:NSDictionary.class]?s[@"transport"]:nil;
+ NSString *unsupported=transport&&![transport[@"ready"] boolValue]&&[transport[@"error"] isKindOfClass:NSString.class]?transport[@"error"]:@"";
  if(error.length)self.status.text=error;
+ else if(!active&&!preparing&&unsupported.length)self.status.text=unsupported;
  else if(preparing)self.status.text=@"Preparing the experimental identity…";
  else if(active){NSDictionary *native=s[@"native"];NSString *phase=![native[@"authenticated"] boolValue]||![native[@"activated"] boolValue]?@"Starting native session":[s[@"nativeFrames"] unsignedLongLongValue]?@"Receiving native video":@"Waiting for native video";self.status.text=[NSString stringWithFormat:@"%@ · %@ seconds\n%@ video frames received",phase,s[@"sessionSeconds"],s[@"nativeFrames"]];}
  else self.status.text=ready?@"Setup complete. Tap Start in the Tesla browser to launch CarPlay. Audio stays on the phone or Bluetooth by default.":@"Tap Prepare CarPlay once to complete setup.";
  NSDictionary *network=s[@"network"];
  NSString *tesla=[network[@"ready"] boolValue]?network[@"url"]:[NSString stringWithFormat:@"Tesla address unavailable: %@",network[@"error"]?:@"checking…"];
- self.addresses.text=[NSString stringWithFormat:@"iPhone address for the HTTPS3 page:\n%@\n\nOther local addresses:\n%@",tesla,Addresses()];
+ self.addresses.text=[NSString stringWithFormat:@"iPhone address for the Tesla page:\n%@\n\nOther local addresses:\n%@",tesla,Addresses()];
 }
 - (void)perform:(NSString *)action {
  if(self.polling)return;self.polling=YES;

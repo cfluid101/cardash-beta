@@ -87,7 +87,43 @@ TRANSPORT_REASONS = {
 }
 
 
-def transport_status(state=None, alive=None, probe=None, reason_probe=None):
+NOT_LOADED_ADVICE = ('The media service has not loaded the CarDash adapter. Restart the phone '
+                     '(userspace reboot) with tweak injection enabled; reinstall this beta only if that does not help.')
+# What the person holding the phone can do about each reason. Reinstalling does
+# not change a framework identity, so it is not suggested where it cannot help.
+TRANSPORT_ADVICE = {
+    2: ('This iOS build{build} is not supported by this beta yet; reinstalling will not change that. '
+        'In the CarDash V3 app tap Export Diagnostics and send the file so a profile for this build can be added.'),
+    3: 'Reinstall this beta so the arm64e adapter slice is loaded, then restart the phone (userspace reboot).',
+    4: ('No Substrate-compatible hooking library was found. Install ElleKit (or Substitute) from your '
+        'package manager, then restart the phone (userspace reboot).'),
+}
+GENERIC_ADVICE = ('The adapter recognised this iOS build{build} but a safety check failed, so nothing was patched. '
+                  'In the CarDash V3 app tap Export Diagnostics and send the file.')
+
+
+def os_build(library=None):
+    """Kernel build string such as 20G75; empty when it cannot be read."""
+    try:
+        library = library or ctypes.CDLL(None)
+        size = ctypes.c_size_t(32)
+        value = ctypes.create_string_buffer(32)
+        if library.sysctlbyname(b'kern.osversion', value, ctypes.byref(size), None, ctypes.c_size_t(0)):
+            return ''
+        text = value.value.decode('ascii', 'replace')
+        return text if text.isalnum() and len(text) <= 16 else ''
+    except (OSError, AttributeError, ValueError):
+        return ''
+
+
+def transport_advice(reason=None, loaded=True, build=''):
+    label = ' (' + build + ')' if build else ''
+    if not loaded:
+        return NOT_LOADED_ADVICE
+    return TRANSPORT_ADVICE.get(reason, GENERIC_ADVICE).format(build=label)
+
+
+def transport_status(state=None, alive=None, probe=None, reason_probe=None, build=None):
     def running(pid):
         os.kill(pid,0)
     result={'ready':False}
@@ -96,7 +132,9 @@ def transport_status(state=None, alive=None, probe=None, reason_probe=None):
         value=read()
         pid,code=value>>8,value&255
         result.update(pid=pid,code=code)
-        if pid<=1:raise ValueError('adapter not loaded; reinstall this beta to reload the media service')
+        if pid<=1:
+            result['advice']=transport_advice(loaded=False)
+            raise ValueError('adapter not loaded')
         (alive or running)(pid)
         # Optional, PID-bound diagnostic state. Old adapters have no sideband;
         # absent, stale or unreadable details must not change the readiness ABI.
@@ -109,12 +147,16 @@ def transport_status(state=None, alive=None, probe=None, reason_probe=None):
                 if reason in TRANSPORT_REASONS:result['reason']=TRANSPORT_REASONS[reason]
         except (OSError,ValueError,AttributeError):pass
         if code!=1:
+            result['build']=os_build() if build is None else build
+            result['advice']=transport_advice(result.get('reasonCode'),build=result['build'])
             detail=result.get('reason')
             raise ValueError(('adapter unavailable: '+detail+'; export diagnostics') if detail else
                              'adapter failed its exact-firmware or hook-provider check; export diagnostics')
         result.update(ready=True,error='')
     except (OSError,ValueError,AttributeError) as error:
         result['error']='USB-free transport is unavailable: '+str(error)
+        # One sentence a tester can act on, after the stable diagnostic text.
+        if result.get('advice'):result['error']+='. '+result['advice']
     return result
 
 

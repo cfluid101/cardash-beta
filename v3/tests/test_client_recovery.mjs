@@ -390,7 +390,7 @@ test('a stalled image request is aborted and reports its timeout',async()=>{
 test('hosted page sends nothing before Connect and labels experimental mode',async()=>{
  const f=fixture({hosted:true,canvasMode:'webcodecs',active:false,audioOutput:'phone'});await settle();
  assert.equal(f.fetchCalls.length,0);assert.equal(f.elements.get('#start').disabled,true);
- assert.match(f.elements.get('#buildLabel').textContent,/HTTPS3 beta/);
+ assert.match(f.elements.get('#buildLabel').textContent,/Viewer 3/);
  f.elements.get('#endpoint').value='http://169.254.38.140:8890/';await f.elements.get('#connect').onclick();await settle();
  assert.deepEqual(f.connectionCalls,['http://169.254.38.140:8890/']);assert(f.adapterCalls.includes('/api/status'));
  assert.equal(f.elements.get('#start').disabled,false);assert.equal(f.elements.get('#connect').textContent,'Reconnect');

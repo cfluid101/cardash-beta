@@ -94,14 +94,14 @@ int main() {
     Reset(true);CDV3AudioHost((void *)1,true);MockLease.request=0;AudioTick();assert(MockFlag && !AudioForcing);
     Reset();CDV3AudioHost((void *)1,true);AudioSetter(true);MockLease.request=0;AudioTick();assert(MockFlag && !AudioForcing);
     Reset(true);CDV3AudioHost((void *)1,true);AudioSetter(false);MockLease.alive=false;AudioTick();assert(!MockFlag && !AudioForcing);
-    Reset();CDV3AudioHost((void *)1,true);MockLease.now=18000;AudioTick();assert(MockFlag); // inclusive 8s boundary
-    MockLease.now=18001;AudioTick();assert(!MockFlag && !AudioForcing);
-    MockLease.stamp=18001;MockLease.now=18002;AudioTick();assert(!MockFlag && !AudioOwnHost);
+    Reset();CDV3AudioHost((void *)1,true);MockLease.now=40000;AudioTick();assert(MockFlag); // inclusive 30s boundary
+    MockLease.now=40001;AudioTick();assert(!MockFlag && !AudioForcing);
+    MockLease.stamp=40001;MockLease.now=40002;AudioTick();assert(!MockFlag && !AudioOwnHost);
     CDV3AudioHost((void *)1,true);assert(MockFlag && AudioForcing); // new session needs fresh identity observation
     Reset();CDV3AudioHost((void *)1,true);RenewDuringRead=true;AudioTick();
     assert(AudioCachedLease.stamp==10003 && AudioCachedLease.now==10004);
     assert(MockFlag && AudioForcing && AudioOwnHost && PublishedBits==15); // renew during read is not future
-    Reset();CDV3AudioHost((void *)1,true);AdvanceDuringLiveness=8001;AudioTick();
+    Reset();CDV3AudioHost((void *)1,true);AdvanceDuringLiveness=30001;AudioTick();
     assert(!MockFlag && !AudioForcing && !AudioOwnHost); // expiry during read is still real expiry
     Reset();CDV3AudioHost((void *)1,true);
     // Simulate a monitor publishing a newer cached heartbeat while the setter
@@ -110,9 +110,9 @@ int main() {
     MockLease.stamp=10003;MockLease.now=10004;AudioTick();
     RequireLockedClock=true;before=LeaseReads;AudioSetter(false);RequireLockedClock=false;
     assert(LeaseReads==before && MockFlag && AudioForcing && AudioOwnHost);
-    MockLease.now=18004;RequireLockedClock=true;AudioSetter(false);RequireLockedClock=false;
+    MockLease.now=40004;RequireLockedClock=true;AudioSetter(false);RequireLockedClock=false;
     assert(!MockFlag && !AudioForcing && !AudioOwnHost); // cached lease still expires without IPC
-    Reset();CDV3AudioHost((void *)1,true);MockLease.now=18001;
+    Reset();CDV3AudioHost((void *)1,true);MockLease.now=40001;
     before=LeaseReads;AudioSetter(false);assert(LeaseReads==before && !MockFlag && !AudioForcing); // cached lease ages without notify
     Reset();CDV3AudioHost((void *)1,true);CDV3AudioHost((void *)2,false);
     assert(MockFlag && AudioOwnHost); // unrelated helper cannot revoke our lease

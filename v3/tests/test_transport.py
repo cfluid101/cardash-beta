@@ -54,6 +54,40 @@ class TransportTest(unittest.TestCase):
         self.assertTrue(ready['ready']);self.assertEqual(ready['error'],'')
         self.assertEqual(ready['reasonCode'],0)
 
+    def test_each_failure_tells_the_tester_what_can_actually_help(self):
+        def failed(reason):
+            return transport_status(probe=lambda:(123<<8)|2,alive=lambda pid:None,build='20H19',
+                                    reason_probe=lambda:(123<<32)|(2<<16)|reason)
+        unsupported=failed(2)
+        self.assertEqual(unsupported['build'],'20H19')
+        self.assertIn('This iOS build (20H19) is not supported by this beta yet',unsupported['error'])
+        self.assertIn('reinstalling will not change that',unsupported['error'])
+        self.assertIn('Export Diagnostics',unsupported['advice'])
+        # The stable diagnostic text testers already quote is still present.
+        self.assertTrue(unsupported['error'].startswith('USB-free transport is unavailable: adapter unavailable: unsupported APTransport firmware UUID or CPU'))
+        self.assertIn('ElleKit',failed(4)['error']);self.assertNotIn('not supported by this beta yet',failed(4)['error'])
+        self.assertIn('arm64e adapter slice',failed(3)['advice'])
+        for reason in (5,6,7,8,9,10):
+            with self.subTest(reason=reason):
+                self.assertIn('a safety check failed, so nothing was patched',failed(reason)['error'])
+        missing=transport_status(probe=lambda:0)
+        self.assertIn('has not loaded the CarDash adapter',missing['error']);self.assertIn('userspace reboot',missing['advice'])
+        ready=transport_status(probe=lambda:(123<<8)|1,alive=lambda pid:None)
+        self.assertEqual(ready['error'],'');self.assertNotIn('advice',ready);self.assertNotIn('build',ready)
+        # An unreadable build never breaks the message.
+        self.assertIn('This iOS build is not supported',transport_status(probe=lambda:(123<<8)|2,alive=lambda pid:None,build='',reason_probe=lambda:(123<<32)|(2<<16)|2)['error'])
+
+    def test_os_build_is_bounded_and_fails_closed(self):
+        from transport import os_build
+        class Library:
+            def __init__(self,value,code=0):self.value=value;self.code=code
+            def sysctlbyname(self,name,buffer,size,new,newlen):
+                buffer.value=self.value;return self.code
+        self.assertEqual(os_build(Library(b'20G75')),'20G75')
+        self.assertEqual(os_build(Library(b'20G75',code=-1)),'')
+        self.assertEqual(os_build(Library(b'../etc')),'')
+        self.assertEqual(os_build(object()),'')
+
     def test_stale_conflicting_and_changing_sideband_is_ignored(self):
         for detail in ((122<<32)|(2<<16)|7, # different media process
                        (123<<32)|(1<<16),   # earlier successful readiness

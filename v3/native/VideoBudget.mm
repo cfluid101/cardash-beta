@@ -66,6 +66,11 @@ static int32_t BudgetCopyProperty(CFTypeRef object,CFStringRef key,CFAllocatorRe
 #include <cerrno>
 #include <cstring>
 #include "AudioVM.h"
+#include "HookProvider.h"
+// The backend refreshes every second. In beta 5 an 8-second lease lapsed while
+// the service was stalled and the encoder left its budget (13 Mbps measured
+// against 750 kbps). A dead backend is still detected at once by its PID.
+static const uint64_t BudgetLeaseMilliseconds=30000;
 static bool BudgetStateReadable(const uint8_t *state) {
     return CDV3AudioMapped((uintptr_t)state,0x153,VM_PROT_READ);
 }
@@ -92,7 +97,7 @@ static void BudgetTick() {
     uint64_t now=BudgetTimebase.denom?(uint64_t)(((__uint128_t)mach_absolute_time()*BudgetTimebase.numer)/BudgetTimebase.denom/1000000):0;
     uint32_t pid=request>>32,bps=request&0xffffffff;
     bool valid=read && pid>1 && pid<=INT32_MAX && bps>=750000 && bps<=6000000 &&
-        stamp && stamp<=now && now-stamp<=8000 && (kill((pid_t)pid,0)==0 || errno==EPERM);
+        stamp && stamp<=now && now-stamp<=BudgetLeaseMilliseconds && (kill((pid_t)pid,0)==0 || errno==EPERM);
     bps=valid?bps:0;
     if (!bps) BudgetObserved.store(0);
     if (BudgetObservedToken>=0) notify_set_state(BudgetObservedToken,BudgetObserved.load());
@@ -153,8 +158,7 @@ static void BudgetImage(const mach_header *header,intptr_t slide) {
 }
 __attribute__((constructor)) static void BudgetLoad() { @autoreleasepool {
     if (![NSProcessInfo.processInfo.processName isEqual:@"mediaserverd"]) return;
-    void *provider=dlopen("/var/jb/usr/lib/libsubstrate.dylib",RTLD_NOW|RTLD_LOCAL);
-    BudgetHook=provider?(decltype(BudgetHook))dlsym(provider,"MSHookFunction"):nullptr;
+    BudgetHook=CDV3ResolveHookFunction();
     notify_register_check("com.cfluid.cardash.v3.video.ready",&BudgetReadyToken);
     int reasonToken=-1;
     if (notify_register_check("com.cfluid.cardash.v3.video.ready_reason",&reasonToken)==NOTIFY_STATUS_OK)

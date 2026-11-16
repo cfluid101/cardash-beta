@@ -13,6 +13,7 @@
 #include "AudioRoute.h"
 #include "AudioVM.h"
 #include "LoopbackProfile.h"
+#include "HookProvider.h"
 
 @protocol CDV3LoopbackHost <NSObject>
 - (id)deviceIdentifier;
@@ -217,9 +218,9 @@ static void Image(const mach_header *header,intptr_t slide) {
 
 __attribute__((constructor)) static void Load(void) { @autoreleasepool {
     if (![NSProcessInfo.processInfo.processName isEqual:@"mediaserverd"]) return;
-    void *h=dlopen("/var/jb/usr/lib/libsubstrate.dylib",RTLD_NOW|RTLD_LOCAL);
-    HookFunction=h?(void (*)(void *,void *,void **))dlsym(h,"MSHookFunction"):nullptr;
-    NSLog(@"CarDashV3Loopback loading provider=%d",HookFunction!=nullptr);
+    const char *provider=nullptr;
+    HookFunction=CDV3ResolveHookFunction(&provider);
+    NSLog(@"CarDashV3Loopback loading provider=%d source=%s",HookFunction!=nullptr,provider?provider:"none");
     Report(NO,@"Transport adapter loading",TransportReason::Loading);
     _dyld_register_func_for_add_image(Image);
     if (!attempted) Report(NO,@"Unsupported APTransport firmware UUID or CPU; no hooks installed",TransportReason::UnsupportedIdentity);

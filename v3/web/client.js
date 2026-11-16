@@ -12,6 +12,25 @@ let layoutSession=null,layoutViewport=null,sourceWidth=1280,sourceHeight=720,lay
 let forceImage=false,lastFrameAt=0,continuousDecodeSupported=false;
 let streamRecovery={session:null,attempts:[],timer:null,pending:null,reason:''};
 let controlsHiddenSession=null,inputCleanup=null;
+// A session this page was showing can end without anyone pressing Stop: the
+// phone lost contact with the browser, or its native connection dropped. When
+// the phone reports that (beta 6 and later), restart it instead of leaving a
+// driver to find the Start button. Bounded, and never after an explicit Stop.
+let resumeSession=null,autoResumes=[];
+const UNATTENDED_STOPS=['browser_timeout','native_control_disconnected','native_event_disconnected','native_video_disconnected','native_helper_ended','native_lease_failed','audio_lease_failed'];
+async function resumeAfterUnattendedStop(s){
+ const stop=s.lastStop,session=resumeSession;
+ if(!session||!stop||typeof stop!=='object'||stop.session!==session||!UNATTENDED_STOPS.includes(stop.reason)||!(stop.secondsAgo<=300))return false;
+ if(!s.identityReady||document.hidden||connectionBusy||changingOutput||changingLayout||!transport.diagnostics.ready)return false;
+ const now=performance.now();autoResumes=autoResumes.filter(at=>now-at<300000);
+ resumeSession=null;
+ if(autoResumes.length>=2){baseStatus='CarPlay stopped after losing contact twice. Press Start to reconnect.';return false;}
+ autoResumes.push(now);nativeStats.autoResumes=(nativeStats.autoResumes||0)+1;
+ const epoch=++commandEpoch;baseStatus='Connection returned; restarting CarPlay…';renderStatus();
+ try{const target=layoutViewport||viewport(),started=await api('start',{viewport:target});if(epoch===commandEpoch){layoutSession=started.session;layoutViewport=started.requestedViewport||target;}}
+ catch(e){if(epoch===commandEpoch){baseStatus=e.message;renderStatus();}}
+ return true;
+}
 function viewport(){const r=video.getBoundingClientRect();return {width:Math.round(r.width),height:Math.round(r.height)};}
 function sameViewport(a,b){return a&&b&&Math.abs(a.width-b.width)<2&&Math.abs(a.height-b.height)<2;}
 async function reconcileLayout(){
@@ -329,12 +348,12 @@ document.addEventListener('visibilitychange',()=>{if(videoConnection)videoConnec
 window.addEventListener('pagehide',()=>{commandEpoch++;if(pointer)fetchDevice('/api/touch',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({...pointer,down:false,session:inputSession})}).catch(()=>{});end();});
 document.querySelector('#start').onclick=async()=>{
  if(connectionBusy||changingOutput||changingLayout||!transport.diagnostics.ready)return;
- const epoch=++commandEpoch;blockedVideoSession=null;blockedVideoError='';layoutError='';end();carplayActive=false;enableSound();baseStatus='Starting native CarPlay…';renderStatus();
+ const epoch=++commandEpoch;resumeSession=null;blockedVideoSession=null;blockedVideoError='';layoutError='';end();carplayActive=false;enableSound();baseStatus='Starting native CarPlay…';renderStatus();
  try{const target=viewport(),s=await api('start',{viewport:target});if(epoch===commandEpoch){layoutSession=s.session;layoutViewport=s.requestedViewport||target;await poll();}}catch(e){if(epoch===commandEpoch)fail(e);}
 };
 document.querySelector('#stop').onclick=async()=>{
  if(changingOutput||changingLayout)return;
- const session=inputSession,epoch=++commandEpoch;
+ const session=inputSession,epoch=++commandEpoch;resumeSession=null;
  try{await api('stop',{session});if(epoch!==commandEpoch)return;layoutSession=null;layoutError='';end();carplayActive=false;baseStatus='Stopped. Press Start to reconnect.';fullscreen(false);renderStatus();}
  catch(e){if(epoch===commandEpoch)fail(e);}
 };
@@ -345,7 +364,7 @@ const fitViewport=document.querySelector('#fitViewport');if(fitViewport)fitViewp
 document.querySelector('#audioOutput').onchange=async()=>{
  const selected=document.querySelector('#audioOutput').value;
  if(changingOutput||changingLayout||!['phone','browser'].includes(selected))return;
- const restart=carplayActive,session=inputSession,epoch=++commandEpoch;
+ const restart=carplayActive,session=inputSession,epoch=++commandEpoch;resumeSession=null;
  const restartViewport=layoutViewport||{width:sourceWidth,height:sourceHeight};
  changingOutput=true;audioOutput=selected;end();carplayActive=false;
  if(selected==='browser')enableSound();
@@ -395,7 +414,7 @@ async function poll(){
    if(typeof s.session!=='string'||!s.session)throw new Error('Native session identity is missing');
    if(inputSession!==s.session){end();inputSession=s.session;audioError='';if(layoutSession!==s.session){layoutSession=null;layoutViewport=s.requestedViewport||null;}}
    sourceWidth=s.actualSource?.width||s.sourceWidth||1280;sourceHeight=s.actualSource?.height||s.sourceHeight||720;positionControlsToggle();
-   carplayActive=true;const session=s.session;
+   carplayActive=true;const session=s.session;resumeSession=session;
    // Decoder output and canvas draw calls are distinct; neither proves that
    // a vehicle physically presented the pixels. Preserve both for diagnosis.
    const rendererStats=videoConnection?.renderer?.stats;
@@ -428,7 +447,10 @@ async function poll(){
    connectSound(session);
   }else{
    if(!closed||inputSession!==null)end();carplayActive=false;
-   baseStatus=s.error||(s.identityReady?'Ready. Press Start to connect.':'Tap Prepare CarPlay in the phone app first.');
+   // Say why Start cannot work on this phone before it is pressed.
+   const unsupported=s.transport&&s.transport.ready===false&&typeof s.transport.error==='string'?s.transport.error:'';
+   baseStatus=s.error||unsupported||(s.identityReady?'Ready. Press Start to connect.':'Tap Prepare CarPlay in the phone app first.');
+   if(await resumeAfterUnattendedStop(s))return;
   }
   renderStatus();
  }catch(e){if(epoch===commandEpoch){baseStatus='iPhone connection unavailable: '+e.message;renderStatus();}}
@@ -437,11 +459,11 @@ async function poll(){
 if(hosted){
  const panel=document.querySelector('#connectionPanel'),input=document.querySelector('#endpoint'),button=document.querySelector('#connect');
  if(panel)panel.hidden=false;if(input)input.value=transport.diagnostics.endpoint;
- const label=document.querySelector('#buildLabel');if(label)label.textContent='CarDash V3 · HTTPS3 beta · Viewer 2';
+ const label=document.querySelector('#buildLabel');if(label)label.textContent='CarDash V3 · Viewer 3';
  baseStatus='Connect to your iPhone to use the H.264 canvas renderer.';
  if(button)button.onclick=async()=>{
   if(connectionBusy||changingOutput||changingLayout)return;
-  const epoch=++commandEpoch;end();carplayActive=false;identityReady=false;blockedVideoSession=null;blockedVideoError='';
+  const epoch=++commandEpoch;resumeSession=null;end();carplayActive=false;identityReady=false;blockedVideoSession=null;blockedVideoError='';
   if(typeof CarDashCanvas==='undefined'||!CarDashCanvas.available()){baseStatus='This browser does not support secure H.264 canvas decoding. No local connection was attempted.';renderStatus();return;}
   connectionBusy=true;baseStatus='Connecting directly to your iPhone…';renderStatus();
   try{await transport.connect(input.value);if(epoch===commandEpoch){connectionBusy=false;await poll();}}

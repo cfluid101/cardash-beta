@@ -18,6 +18,11 @@
 - (BOOL)isAuthenticated;
 - (BOOL)isActivated;
 @end
+// The parent writes a heartbeat every second. Three November 2026 sessions
+// ended with parent_lease_expired while the service was stalled, not gone: a
+// parent that exits is still detected at once by getppid() and the closed pipe.
+static const double CDParentLeaseSeconds=60;
+static const unsigned CDParentAlarmSeconds=75;
 static volatile sig_atomic_t stopped=0;
 static void hardStop(int s){(void)s;_exit(124);}
 static void stop(int s){(void)s;stopped=1;}
@@ -31,7 +36,7 @@ int main(int argc,char **argv){@autoreleasepool{
  if(argc!=4)return 2;
  int port=atoi(argv[1]),duration=atoi(argv[3]);NSString *key=@(argv[2]);
  if(port<1024||port>65535||duration<0||key.length!=64||[key rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet].location!=NSNotFound)return 2;
- signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGHUP,stop);signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(20);pid_t parent=getppid();
+ signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGHUP,stop);signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(CDParentAlarmSeconds);pid_t parent=getppid();
  if(fcntl(STDIN_FILENO,F_SETFL,fcntl(STDIN_FILENO,F_GETFL)|O_NONBLOCK)<0)return 2;
  CDEmit(@"experimental_target",@{@"machine":CDSystem("hw.machine")?:@"",@"build":CDSystem("kern.osversion")?:@""});
  void *h=dlopen("/System/Library/PrivateFrameworks/CarKit.framework/CarKit",RTLD_NOW|RTLD_LOCAL);if(!h)return 4;
@@ -58,8 +63,8 @@ int main(int argc,char **argv){@autoreleasepool{
  [client startSessionWithHost:host completion:^(BOOL success,NSError *error){CDEmit(@"native_completion",@{@"success":@(success),@"error":error.description?:@""});}];
  double start=CDClock(),last=0,lease=start;while(!stopped&&getppid()==parent&&(!duration||CDClock()-start<duration)){@autoreleasepool{
  char heartbeat[64];ssize_t n=read(STDIN_FILENO,heartbeat,sizeof(heartbeat));
- if(n>0){lease=CDClock();alarm(20);}else if(n==0||(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){CDEmit(@"parent_pipe_closed",@{});break;}
- if(CDClock()-lease>15){CDEmit(@"parent_lease_expired",@{});break;}
+ if(n>0){lease=CDClock();alarm(CDParentAlarmSeconds);}else if(n==0||(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){CDEmit(@"parent_pipe_closed",@{});break;}
+ if(CDClock()-lease>CDParentLeaseSeconds){CDEmit(@"parent_lease_expired",@{});break;}
  timing.step();if(CDClock()-last>1){id current=[observer currentSession];id authenticated=NSNull.null,activated=NSNull.null;if(current&&CDMethodMatches([current class],@"isAuthenticated","B",@[],NO,YES))authenticated=@([current isAuthenticated]);if(current&&CDMethodMatches([current class],@"isActivated","B",@[],NO,YES))activated=@([current isActivated]);CDEmit(@"session_observation",@{@"present":@(current!=nil),@"authenticated":authenticated,@"activated":activated,@"timing_requests":@(timing.requests),@"timing_replies":@(timing.replies)});last=CDClock();}pump(.02);}}
  }@catch(NSException *e){CDEmit(@"exception",@{@"name":e.name,@"reason":e.reason?:@""});}
  alarm(5);[client cancelRequests];pump(1);CDEmit(@"cleanup",@{@"session_present":@([observer currentSession]!=nil)});return 0;

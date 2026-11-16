@@ -18,6 +18,10 @@ static bool ReadAudioNotificationValues(uint64_t &request,uint64_t &stamp,uint64
 static bool AudioPIDAlive(uint64_t pid);
 static uint64_t AudioNowMS();
 static void PublishAudioState(uint8_t bits);
+// The backend refreshes every second; a stalled-but-alive service kept its
+// session in the November 2026 log while this lease (then 8 s) lapsed and the
+// phone route was released mid-drive. A dead backend is detected by its PID.
+static const uint64_t AudioLeaseMilliseconds=30000;
 static pthread_mutex_t AudioMutex=PTHREAD_MUTEX_INITIALIZER;
 static volatile uint8_t *AudioFlag=nullptr;
 static void (*NativeAudioSetter)(bool)=nullptr;
@@ -55,7 +59,7 @@ static AudioLease CurrentAudioLeaseLocked() {
 static bool AudioLeaseValid(const AudioLease &s) {
     uint64_t pid=s.request>>8;
     return s.coherent && (s.request&255)==1 && pid>1 && pid<=INT_MAX &&
-        s.alive && s.stamp && s.stamp<=s.now && s.now-s.stamp<=8000;
+        s.alive && s.stamp && s.stamp<=s.now && s.now-s.stamp<=AudioLeaseMilliseconds;
 }
 // Caller holds AudioMutex. Native direct stores cannot take our mutex: the
 // bounded monitor records observed changes and reasserts only during the lease.
@@ -141,6 +145,7 @@ extern "C" void CDV3AudioHost(const void *helper,bool own) {
 #include <unistd.h>
 #include <cerrno>
 #include <cstring>
+#include "HookProvider.h"
 
 namespace {
 static int AudioRequestToken=-1, AudioLeaseToken=-1, AudioReadyToken=-1, AudioStateToken=-1;
@@ -241,8 +246,7 @@ __attribute__((constructor)) static void AudioLoad() { @autoreleasepool {
     registered=(notify_register_check("com.cfluid.cardash.v3.audio.state",&AudioStateToken)==NOTIFY_STATUS_OK)&&registered;
     if (!registered) {AudioReport(false,@"Audio lease notification registration failed");return;}
     AudioReport(false,@"Audio adapter loading");
-    void *h=dlopen("/var/jb/usr/lib/libsubstrate.dylib",RTLD_NOW|RTLD_LOCAL);
-    AudioHookFunction=h?(void (*)(void *,void *,void **))dlsym(h,"MSHookFunction"):nullptr;
+    AudioHookFunction=CDV3ResolveHookFunction();
     // Complete dyld's synchronous callbacks before starting a worker that can
     // enter notify. The image callback never reads the notification lease.
     _dyld_register_func_for_add_image(AudioImage);
