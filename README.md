@@ -1,3 +1,14 @@
+# Viewer 3 — November 15, 2026
+
+Refresh https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=3 to load it. The controls header says Viewer 3; enter the same iPhone address as before. It works with the packages already installed.
+
+- A phone whose iOS build is not supported now says so on the page before Start is pressed, with what can and cannot help, instead of failing after Start.
+- With package `3.0.0~beta.6` or later, a session that ended on its own (the phone lost contact with the browser, or its native connection dropped) restarts itself when the phone is reachable again: at most twice in five minutes, never after Stop, never while the page is hidden. Earlier packages do not report why a session ended, so nothing changes for them.
+
+The beta 6 package keeps a session alive through 90 seconds of browser silence (was 12), keeps the encoder inside its bandwidth budget while the phone service is stalled, cuts bitrate on late pictures or unsent video rather than on one slow request, and resumes an overflowing stream at the next keyframe without reconnecting. It changes nothing about which iOS builds are supported. Details and the log evidence behind each change: [BETA-6.md](https://github.com/cfluid101/cardash-beta/blob/fee4a90bebcda36a432346764759b6cf6aee1148/v3/BETA-6.md).
+
+125 JavaScript tests pass (104 viewer, 21 reference receiver). **Neither Viewer 3 nor the beta 6 package has been run on a phone or in a car yet.** Script digests and the source commit are in option1/viewer-version.json. Earlier immutable script versions remain available for cached pages and rollback.
+
 # Viewer 2 — November 14, 2026
 
 Refresh https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=2 to load the updated controls. No DEB reinstall is required for this hosted-page update. The controls header says Viewer 2; enter the same iPhone address as before.

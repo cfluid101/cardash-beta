@@ -1,19 +1,21 @@
 {
-  "viewer": "https3-viewer2",
-  "date": "2026-11-14",
-  "source_commit": "d679adfca830ea87d09fa8ad733bfcea2b4abc17",
+  "viewer": "https3-viewer3",
+  "date": "2026-11-15",
+  "source_commit": "fee4a90bebcda36a432346764759b6cf6aee1148",
   "initial_size": "Start",
   "later_native_resize": "explicit Resize display only",
+  "unattended_stop": "restarts the session it was showing, at most twice in five minutes; needs package 3.0.0~beta.6 or later",
+  "unsupported_phone": "transport error shown before Start",
   "script_sha256": {
     "assets/https3/transport.abd7ecc4fd565dd0.js": "abd7ecc4fd565dd0281534254dec5721bc1afc0a960b8fcd70e81779d0338374",
     "assets/https3/audio.de5a9f42fd3e3976.js": "de5a9f42fd3e39762c2b28a43cc865d32cb9769f4f2700f8d9cffde4815d9697",
     "assets/https3/canvas-video.dfd4f8c2225e01ca.js": "dfd4f8c2225e01cae98842d118f0d48c76224006bd0c791cd6de969d7e81b9a1",
-    "assets/https3/client.d272e31555faccc8.js": "d272e31555faccc8d09630f40322d0d7f6d1fc512ed09c903b495343ad18f21a"
+    "assets/https3/client.bdceab33f76673a7.js": "bdceab33f76673a731343421d9b2cea94064eb83c25d13035683aaef3227a424"
   },
   "inline_style_sha256_base64": "Jgfl+sK/vabHDUqPn937k5CsliYTlbWyuA2NzQP0OOY=",
   "tests": {
-    "javascript_passed": 117,
-    "desktop_browser_fixture": true,
+    "javascript_passed": 125,
+    "desktop_browser_fixture": false,
     "physical_tesla_tested": false
   }
 }
