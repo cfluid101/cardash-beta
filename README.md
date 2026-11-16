@@ -1,5 +1,7 @@
 # Viewer 3 — November 15, 2026
 
+**Beta 6 package:** https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.6 (pre-release; not yet run on a phone or in a car).
+
 Refresh https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=3 to load it. The controls header says Viewer 3; enter the same iPhone address as before. It works with the packages already installed.
 
 - A phone whose iOS build is not supported now says so on the page before Start is pressed, with what can and cannot help, instead of failing after Start.
@@ -36,4 +38,4 @@ controller credentials and diagnostics travel directly between the browser and
 local iPhone. There is no cloud media relay or diagnostic upload. Previous
 immutable scripts are retained for cached pages. See LICENSE.
 
-Download and setup: https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3
+Previous package and setup: https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.5-https.3
