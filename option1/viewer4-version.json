@@ -1,0 +1,23 @@
+{
+  "viewer": "https3-viewer4",
+  "date": "2026-11-16",
+  "source_commit": "6853363594803a3c4c62ae69e226ea82bbf86cd2",
+  "initial_size": "Start",
+  "later_native_resize": "explicit Resize display only",
+  "unattended_stop": "restarts the session it was showing, at most twice in five minutes; needs package 3.0.0~beta.6 or later",
+  "unsupported_phone": "transport error shown before Start",
+  "remembered_phone": "address of the last phone reached is kept in this browser (never the token); a reloaded page reconnects by itself and rejoins a running session; Connect works as before if the browser refuses",
+  "shrunk_browser": "package 3.0.0~beta.7 or later keeps CarPlay for 15 minutes without a browser; earlier packages stop after 90 seconds (beta 6) or 12 seconds",
+  "script_sha256": {
+    "assets/https3/transport.abd7ecc4fd565dd0.js": "abd7ecc4fd565dd0281534254dec5721bc1afc0a960b8fcd70e81779d0338374",
+    "assets/https3/audio.de5a9f42fd3e3976.js": "de5a9f42fd3e39762c2b28a43cc865d32cb9769f4f2700f8d9cffde4815d9697",
+    "assets/https3/canvas-video.dfd4f8c2225e01ca.js": "dfd4f8c2225e01cae98842d118f0d48c76224006bd0c791cd6de969d7e81b9a1",
+    "assets/https3/client.8c4c1cd03b048e61.js": "8c4c1cd03b048e615ba356550afa8b1aa918b555b9116bfaf767e2b24bec65ae"
+  },
+  "inline_style_sha256_base64": "Jgfl+sK/vabHDUqPn937k5CsliYTlbWyuA2NzQP0OOY=",
+  "tests": {
+    "javascript_passed": 131,
+    "desktop_browser_fixture": false,
+    "physical_tesla_tested": false
+  }
+}

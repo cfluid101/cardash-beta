@@ -1,5 +1,5 @@
 {
-  "viewer": "https3-viewer4",
+  "viewer": "https3-viewer5",
   "date": "2026-11-16",
   "source_commit": "6853363594803a3c4c62ae69e226ea82bbf86cd2",
   "initial_size": "Start",
@@ -12,12 +12,39 @@
     "assets/https3/transport.abd7ecc4fd565dd0.js": "abd7ecc4fd565dd0281534254dec5721bc1afc0a960b8fcd70e81779d0338374",
     "assets/https3/audio.de5a9f42fd3e3976.js": "de5a9f42fd3e39762c2b28a43cc865d32cb9769f4f2700f8d9cffde4815d9697",
     "assets/https3/canvas-video.dfd4f8c2225e01ca.js": "dfd4f8c2225e01cae98842d118f0d48c76224006bd0c791cd6de969d7e81b9a1",
-    "assets/https3/client.8c4c1cd03b048e61.js": "8c4c1cd03b048e615ba356550afa8b1aa918b555b9116bfaf767e2b24bec65ae"
+    "assets/https3/client.8c4c1cd03b048e61.js": "8c4c1cd03b048e615ba356550afa8b1aa918b555b9116bfaf767e2b24bec65ae",
+    "assets/https3/client.351827b1b5af1686.js": "351827b1b5af1686effac6c6c194039f2efc96da11b5439b217519f4389cee77",
+    "assets/https3/viewer-loader.83c7ea424f7b2401.js": "83c7ea424f7b24017009077338b20611cf0125706831b8118713bed184cdd6cf"
   },
-  "inline_style_sha256_base64": "Jgfl+sK/vabHDUqPn937k5CsliYTlbWyuA2NzQP0OOY=",
+  "inline_style_sha256_base64": "9Xiql7pi4VYQvh3l1h6mHo/rRHJycfEmZvg1Tsvzv7M=",
   "tests": {
-    "javascript_passed": 131,
+    "javascript_passed": 117,
+    "static_integrity_passed": true,
     "desktop_browser_fixture": false,
-    "physical_tesla_tested": false
-  }
+    "physical_tesla_tested": false,
+    "existing_viewer_suite_passed": 110,
+    "routing_integrity_tests_passed": 7
+  },
+  "source_notes": "Source commit identifies the unchanged Viewer 4 behavior. Viewer 5 changes only the visible client label; the hosted loader and release note are in this Pages branch.",
+  "viewer_url": "https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=5",
+  "package_release": "https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.9",
+  "routes": {
+    "5": {
+      "client": "assets/https3/client.351827b1b5af1686.js",
+      "label": "Viewer 5",
+      "release_note": true
+    },
+    "4": {
+      "client": "assets/https3/client.8c4c1cd03b048e61.js",
+      "label": "Viewer 4",
+      "release_note": false
+    },
+    "default": {
+      "client": "assets/https3/client.8c4c1cd03b048e61.js",
+      "label": "Viewer 4",
+      "release_note": false
+    }
+  },
+  "previous_viewer_manifest": "viewer4-version.json",
+  "loader": "assets/https3/viewer-loader.83c7ea424f7b2401.js"
 }
