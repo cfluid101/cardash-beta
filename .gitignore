@@ -1,0 +1,7 @@
+build/
+dist/
+evidence/*
+.superpowers/
+__pycache__/
+receiver/node_modules/
+.DS_Store

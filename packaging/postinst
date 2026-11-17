@@ -1,0 +1,29 @@
+#!/var/jb/bin/sh
+set -eu
+case "${1:-}" in
+ configure)
+  ROOT=/var/jb/var/lib/cardash-diagnostics
+  # The helper checks directory ownership and rejects symlinks/hardlinked logs
+  # using descriptors before changing any file mode or ownership.
+  /var/jb/usr/libexec/cardash-diagnostics --prepare
+  {
+   echo 'CarDash Diagnostics 0.1.3 install'
+   date -u
+   /var/jb/bin/launchctl bootout system/com.cfluid.cardash.diagnostics >/dev/null 2>&1 || :
+   if /var/jb/bin/launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.cfluid.cardash.diagnostics.plist; then
+    echo 'On-demand helper registered. No test has started.'
+    if /var/jb/usr/libexec/cardash-diagnostics --status; then
+     echo 'Root socket preflight passed. No CarPlay test has started.'
+    else
+     echo 'ROOT SOCKET PREFLIGHT FAILED. Share the installation log.'
+     /var/jb/bin/launchctl print system/com.cfluid.cardash.diagnostics || :
+    fi
+   else
+    echo 'HELPER REGISTRATION FAILED. Open the app and share its diagnostic log.'
+   fi
+   /var/jb/usr/bin/uicache -p /var/jb/Applications/CarDashDiagnostics.app
+  } >> "$ROOT/installation.log" 2>&1
+  echo 'Open CarPlay Diagnostics and tap Run diagnostics. No respring is required.'
+ ;;
+esac
+exit 0

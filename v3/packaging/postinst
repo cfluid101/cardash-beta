@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+mkdir -p /var/jb/var/lib/cardash-v3
+chown root:mobile /var/jb/var/lib/cardash-v3
+chmod 750 /var/jb/var/lib/cardash-v3
+# Permit the companion to export startup failures without a running service.
+# Preserve existing contents and leave identity/receiver files private.
+touch /var/jb/var/lib/cardash-v3/installation.log /var/jb/var/lib/cardash-v3/service-bootstrap.log
+chown root:mobile /var/jb/var/lib/cardash-v3/installation.log /var/jb/var/lib/cardash-v3/service-bootstrap.log
+chmod 640 /var/jb/var/lib/cardash-v3/installation.log /var/jb/var/lib/cardash-v3/service-bootstrap.log
+printf 'CarDash V3 3.0.0 beta 7 install\n' >> /var/jb/var/lib/cardash-v3/installation.log
+date -u >> /var/jb/var/lib/cardash-v3/installation.log
+launchctl bootout system/com.cfluid.cardash.v3 >/dev/null 2>&1 || true
+launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.cfluid.cardash.v3.plist >> /var/jb/var/lib/cardash-v3/installation.log 2>&1
+# Reload only the media service to load the exact-build loopback adapter.
+# A launchctl that rejects this target must not fail the installation, and a
+# media service that kept its old process has not loaded the adapter: the
+# browser then reports "adapter not loaded". Confirm the restart by PID and
+# end the process directly (launchd relaunches it) when launchctl did not.
+media_pid() {
+    launchctl print system/com.apple.mediaserverd 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\).*$/\1/p' | head -n 1
+}
+before=$(media_pid || true)
+launchctl kickstart -k system/com.apple.mediaserverd >> /var/jb/var/lib/cardash-v3/installation.log 2>&1 || printf 'launchctl could not restart the media service.\n' >> /var/jb/var/lib/cardash-v3/installation.log
+sleep 1
+after=$(media_pid || true)
+if [ -n "$before" ] && [ "$before" = "$after" ]; then
+    printf 'Media service kept process %s; ending it so the adapter loads.\n' "$before" >> /var/jb/var/lib/cardash-v3/installation.log
+    kill -9 "$before" >> /var/jb/var/lib/cardash-v3/installation.log 2>&1 || true
+    sleep 1
+    after=$(media_pid || true)
+fi
+printf 'Media service process: %s -> %s\n' "${before:-unknown}" "${after:-unknown}" >> /var/jb/var/lib/cardash-v3/installation.log
+uicache -p /var/jb/Applications/CarDashV3.app >> /var/jb/var/lib/cardash-v3/installation.log 2>&1 || printf 'uicache failed; respring to show the CarDash V3 icon.\n' >> /var/jb/var/lib/cardash-v3/installation.log
+printf 'V3 service registered. Open CarDash V3 to prepare and start a test. No native session starts on installation.\n' >> /var/jb/var/lib/cardash-v3/installation.log

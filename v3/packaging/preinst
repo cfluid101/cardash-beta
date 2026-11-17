@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+export PATH=/var/jb/usr/bin:/var/jb/bin:/var/jb/usr/sbin:/var/jb/sbin:/usr/bin:/bin:/usr/sbin:/sbin
+[ -d /var/jb ] || { echo 'CarDash V3 requires a rootless jailbreak.' >&2; exit 1; }
+echo 'Experimental compatibility build: installation is not restricted by phone model or firmware version. Native adapter checks still apply.'

@@ -1,0 +1,10 @@
+Package: com.cfluid.cardash.v3
+Name: CarDash V3 Native Beta
+Version: 3.0.0~beta.7
+Architecture: iphoneos-arm64
+Section: Tweaks
+Depends: python3 (>= 3.9), libssl3, uikittools, mobilesubstrate
+Maintainer: cfluid
+Author: cfluid
+Homepage: https://github.com/cfluid101/cardash-beta
+Description: Experimental native CarPlay video, touch and audio beta for rootless arm64 devices. No installer model or firmware allowlist. Native adapters check framework compatibility before patching; installation does not establish session support. Preserves original CarDash and V2 settings.

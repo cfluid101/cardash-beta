@@ -1,0 +1,11 @@
+# HTTPS3 Viewer 2 — November 14, 2026
+
+This is a hosted-page update; existing V3 packages do not need reinstalling. The same HTTPS3 URL remains supported. Reload the page, or use `?v=https3&ui=2` once to avoid a cached HTML page. The controls header identifies Viewer 2.
+
+The collapsed controls button is a 28-pixel-wide left-edge chevron beneath the native clock/signal region. It follows the actual contained CarPlay image, including letterbox margins, rather than covering the upper-right app buttons. The panel stays an overlay; keyboard focus returns to its toggle when manually closed.
+
+Start measures the viewport once. Later browser/window/full-screen size changes only scale the existing image proportionally and keep normalized touch coordinates aligned. They send no resize, stop, start or reconnect command. Resize display remains an explicit action and can briefly restart display/audio. Audio-output changes preserve the accepted native dimensions across their existing restart. This removes the former 1.2-second resize timer and its deferred follow-up paths.
+
+Validation: all 117 viewer/reference-receiver JavaScript tests passed (96 viewer, 21 receiver), with no skipped cases. The regression first reproduced three unwanted native resize requests from three window changes. Client tests now retain stream identity/audio, verify explicit single resize, reject a queued second resize during an in-flight request, retain audio-restart geometry, and position the arrow with native letterboxing. Desktop Chrome checks used a clearly labeled synthetic layout/transport fixture, not a connected iPhone: connection controls remained accessible at 760×320; 773×601, 1280×420, 760×320 and 390×844 changes retained one session and one stream; native center touch remained (0.5, 0.5); one explicit Resize display produced one resize. No Content Security Policy violation occurred.
+
+The native receiver, media codecs, credentials and original project/state were not changed. A Tesla trial still needs to confirm physical presentation while expanding/shrinking its browser. A browser that actually unloads or suspends the page can still interrupt a session; this change removes resize-triggered restarts, not the existing disconnect timeout.

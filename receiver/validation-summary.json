@@ -1,0 +1,104 @@
+{
+  "date": "2026-11-06",
+  "trial": "20261106-152709",
+  "target": {
+    "model": "iPhone10,2",
+    "iOS": "16.6",
+    "build": "20G75",
+    "jailbreak": "Dopamine rootless"
+  },
+  "probe_sha256": "a80f40f3debd498aaf53aaa30326889b22bcf68cb9dd323bfe5a70b8293eaef2",
+  "native": {
+    "requested_duration_seconds": 150,
+    "authenticated_activated_observation_seconds": 148.875,
+    "authenticated_activated_samples": 147,
+    "received_frames": 2579,
+    "receiver_errors": 0,
+    "independent_ffmpeg_decode_errors": 0,
+    "recorded_media": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 1280,
+          "height": 720,
+          "nb_read_frames": "2578"
+        }
+      ]
+    },
+    "cleanup_session_present": false
+  },
+  "browser": [
+    {
+      "source": "native iPhone CarPlay, no generated video",
+      "passed": true,
+      "before": {
+        "decodedFrames": 4,
+        "inputSent": 0,
+        "trims": 0,
+        "mediaTime": 1.133322,
+        "width": 1280,
+        "height": 720,
+        "quality": 7
+      },
+      "after": {
+        "decodedFrames": 601,
+        "inputSent": 4,
+        "trims": 3,
+        "mediaTime": 22.333322,
+        "width": 1280,
+        "height": 720,
+        "total": 605,
+        "dropped": 1,
+        "lag": 0.20262199999999808,
+        "status": "Live \u00b7 601 decoded frames"
+      }
+    },
+    {
+      "source": "native iPhone CarPlay, no generated video",
+      "passed": true,
+      "before": {
+        "decodedFrames": 3,
+        "inputSent": 0,
+        "trims": 0,
+        "mediaTime": 39.966655,
+        "width": 1280,
+        "height": 720,
+        "quality": 6
+      },
+      "after": {
+        "decodedFrames": 605,
+        "inputSent": 4,
+        "trims": 3,
+        "mediaTime": 61.133322,
+        "width": 1280,
+        "height": 720,
+        "total": 611,
+        "dropped": 3,
+        "lag": 0.20455499999999915,
+        "status": "Live \u00b7 605 decoded frames"
+      }
+    }
+  ],
+  "preservation": {
+    "original_host_entries_unchanged": 585,
+    "original_deb_unchanged": true,
+    "protected_device_hashes_unchanged": 23,
+    "product_baseline_hashes_unchanged": 203,
+    "phone_unlocked_after": true,
+    "phone_display_on_after": true,
+    "original_stopped_daemon_unchanged": true
+  },
+  "host_tests": {
+    "passed": 21,
+    "failed": 0
+  },
+  "limitations": [
+    "Mac-assisted receiver through SSH; not standalone Tesla release",
+    "Audio output and microphone unimplemented",
+    "Experimental DiPlay accessory identity accepted on this target only",
+    "Existing CarBridge installed; arbitrary-app independence unproven",
+    "Locked switching, adaptive source resolution, Tesla networking and long-duration operation unverified"
+  ]
+}
