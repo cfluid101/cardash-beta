@@ -68,7 +68,7 @@ test('Viewer 5 client changes only the displayed label',async()=>{
 test('release note links are separate from the direct phone connection',()=>{
  const note=html.match(/<p id="releaseInfo" hidden>([\s\S]*?)<\/p>/)[1];
  assert(note.includes('https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.9'));
- assert(note.includes('com.cfluid.cardash.v3_3.0.0~beta.9_iphoneos-arm64.deb'));
+ assert(note.includes('com.cfluid.cardash.v3_3.0.0-beta.9_iphoneos-arm64.deb'));
  assert(note.includes('Existing Beta 7/8 packages'));
  assert(note.includes('export a diagnostic report'));
 });

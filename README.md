@@ -1,6 +1,6 @@
 # Viewer 5 — November 16, 2026
 
-[Open Viewer 5](https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=5) · [Beta 9 release notes](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.9) · [Download the Beta 9 DEB](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.9/com.cfluid.cardash.v3_3.0.0~beta.9_iphoneos-arm64.deb)
+[Open Viewer 5](https://cfluid101.github.io/cardash-beta/option1/?v=https3&ui=5) · [Beta 9 release notes](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.9) · [Download the Beta 9 DEB](https://github.com/cfluid101/cardash-beta/releases/download/v3.0.0-beta.9/com.cfluid.cardash.v3_3.0.0-beta.9_iphoneos-arm64.deb)
 
 The controls header says **Viewer 5**. The welcome panel links to the compatibility beta and explains how to export a failed-start report. Connection, video, touch, audio, remembered-phone and recovery behavior are unchanged from Viewer 4. Viewer 5 remains usable with existing Beta 7 and Beta 8 packages; updating the web page does not add firmware support to an installed package.
 
