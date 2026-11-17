@@ -14,7 +14,8 @@ class LoopbackTest(unittest.TestCase):
                             '-fblocks', '-Wall', '-Wextra', '-Werror',
                             str(ROOT / 'v3/tests/loopback_harness.mm'),
                             '-framework', 'Foundation', '-o', str(binary)], check=True)
-            result = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('10 native lifecycle cases passed', result.stdout)
             self.assertIn('Final-reference callback lifetime case passed', result.stdout)
             guarded = subprocess.run([str(binary), 'guarded'], check=True, capture_output=True, text=True)
@@ -28,6 +29,7 @@ class LoopbackTest(unittest.TestCase):
             subprocess.run(['xcrun', 'clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
                             str(ROOT / 'v3/tests/loopback_profile_harness.cpp'),
                             '-o', str(binary)], check=True)
-            result = subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            result = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('Exact identity and full prologue gates passed', result.stdout)
 

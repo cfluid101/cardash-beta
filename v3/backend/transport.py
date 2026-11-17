@@ -76,7 +76,7 @@ TRANSPORT_REASONS = {
     0: 'transport adapter ready',
     1: 'transport adapter is loading',
     2: 'unsupported APTransport firmware UUID or CPU',
-    3: 'the 20A357 profile requires the arm64e adapter slice',
+    3: 'this firmware profile requires the arm64e adapter slice',
     4: 'native hook provider is unavailable',
     5: 'CMBaseObjectGetDerivedStorage is unavailable',
     6: 'transport entry bounds or executable mapping mismatch',

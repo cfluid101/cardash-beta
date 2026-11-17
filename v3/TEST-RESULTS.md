@@ -1,3 +1,21 @@
+# Beta 8 — iOS 15.4.1 compatibility verification
+
+Package: `3.0.0~beta.8` (November 16, 2026), based on the released beta 7 source at `6853363594803a3c4c62ae69e226ea82bbf86cd2`. Adds exact 19E258/iPhone 13 Pro firmware profiles and retains the original 20G75/iPhone 8 Plus and 20A357/iPhone 14 Pro Max implementations. **No physical phone was contacted or installed on. This build is experimental and has no device acceptance result.**
+
+**389 automated tests passed:** 257 V3 Python/native/package tests, 110 viewer JavaScript tests, 21 reference-receiver JavaScript tests and one reference session-lock test. The V3 run used all three host crypto/audio/video bridges and completed without skips. All 17 backend Python files also parsed using the Python 3.9 grammar; this is a syntax check, not execution on the tester's Python runtime. Historical legacy-diagnostic test counts below are not included in this run.
+
+New-profile tests first failed against beta 7's selectors. The updated tests cover exact 19E258 identities and fingerprints, independent audio flag decoding, CopyProperty selection, known iOS 16 profiles, CPU/UUID/mapping/prologue refusal, mixed or foreign CarKit method identities, secure archive/readback and lifecycle behavior. The package deployment check first failed against the actual beta 7 DEB because it declared iOS 16.0. Existing recovery, bitrate, video timing, audio, service diagnostics and ownership tests remain in the full suite.
+
+The iPhoneOS build passed with warnings treated as errors. The actual beta 8 DEB audit checks all nine Mach-O files (ten architecture slices), their 15.4.1 minimums and strict signatures, including the full app bundle. It verifies universal arm64/arm64e adapter packaging, mediaserverd-only injection, app/package version agreement, the three native-target records, every payload-manifest hash, rootless ownership/paths, installer behavior, and absence of saved identities/private-key file types. An independent reviewer caught and corrected a test-context issue: the app must be signature-verified inside its sealed bundle, not as a renamed standalone executable.
+
+The external iOS 15 crypto link input was verified through official signed Procursus repository metadata, package/library SHA256 and minimum-version checks. All 41 crypto imports resolve, and all 7,988 exported names match the prior link input. The builder pins the genuine iOS 15 artifact instead of modifying an iOS 16 binary. OpenSSL and Apple frameworks are not bundled. See BUILD.md for the reproducible dependency identity.
+
+Independent read-only reviews compared the new media constants directly with the extracted Apple 19E258 binaries and checked CarKit contracts/callback evidence against the retained firmware analysis. They found no remaining native-profile issues. Existing iOS 16 profile values and protective checks are retained. Viewer assets, reference receiver, shared legacy sources, codec/crypto implementations, injection provider and installer scripts are unchanged from the released baseline.
+
+These checks do not establish live arm64e injection/PAC behavior, private-framework execution, a native handshake, video/input, phone/Bluetooth routing, locked switching, reboot/reconnect or cleanup on any phone. Beta 7's known audio-at-Start issue is not fixed here. The iPhone 14 Pro Max path remains experimental; earlier iPhone 8 Plus success is historical evidence, not a beta 8 device test. Use BETA-8.md for the three-device acceptance procedure and COMPATIBILITY.md for the limits on additional versions and jailbreak layouts.
+
+# Historical verification records
+
 # HTTPS3 compatibility beta 1 — local verification
 
 Package: `3.0.0~beta.5+https.3.open.2` (November 10, 2026). This is the full receiver with experimental implementation profiles matching the iPhone 14 Pro Max / iOS 16.0 / 20A357 report. **No physical phone was contacted or installed on for this revision. The new native path has not been verified on the tester's device.**

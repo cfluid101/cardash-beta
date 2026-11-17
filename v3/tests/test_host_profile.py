@@ -38,19 +38,39 @@ class HostProfileTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.run_case(mode)
 
+    def test_ios1541_profile_selects_dictionary_path_with_its_verified_completion(self):
+        for mode in ('profile-new-ios15', 'profile-different-build-ios15'):
+            with self.subTest(mode=mode):
+                self.run_case(mode)
+
+    def test_dictionary_profiles_reject_mixed_or_foreign_method_images(self):
+        for suffix in ('', '-ios15'):
+            for mode in ('profile-unknown', 'profile-mixed-method-uuid',
+                         'profile-unknown-method-uuid', 'profile-foreign-method-owner',
+                         'profile-foreign-class-image', 'profile-foreign-implementation-image',
+                         'profile-wrong-start-type'):
+                with self.subTest(mode=mode + suffix):
+                    self.run_case(mode + suffix)
+
     def test_verified_dictionary_fields_survive_actual_secure_archive(self):
-        self.run_case('valid')
+        for mode in ('valid', 'valid-ios15'):
+            with self.subTest(mode=mode):
+                self.run_case(mode)
 
     def test_live_and_wire_field_mismatches_are_rejected(self):
-        for mode in ('corrupt-live', 'wrong-live-type', 'corrupt-wire', 'wrong-wire-type',
-                     'archive-throws', 'secure-disabled'):
-            with self.subTest(mode=mode):
-                self.run_case(mode)
+        for suffix in ('', '-ios15'):
+            for mode in ('corrupt-live', 'wrong-live-type', 'corrupt-wire', 'wrong-wire-type',
+                         'archive-throws', 'secure-disabled'):
+                with self.subTest(mode=mode + suffix):
+                    self.run_case(mode + suffix)
 
     def test_invalid_types_and_foreign_implementations_never_construct(self):
-        for mode in ('wrong-method-type', 'invalid-key-type', 'invalid-key-hex', 'production-owner-reject'):
-            with self.subTest(mode=mode):
-                self.run_case(mode)
+        for suffix in ('', '-ios15'):
+            for mode in ('wrong-method-type', 'invalid-key-type', 'invalid-key-hex',
+                         'production-owner-reject', 'mixed-method-uuid',
+                         'unknown-method-uuid', 'foreign-method-owner'):
+                with self.subTest(mode=mode + suffix):
+                    self.run_case(mode + suffix)
 
 
 if __name__ == '__main__':

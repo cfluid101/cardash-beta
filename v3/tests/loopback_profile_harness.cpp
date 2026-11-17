@@ -9,6 +9,49 @@ static bool Mapping(uintptr_t address,size_t bytes) {
     ++mappingCalls;assert(bytes==20);return address!=deniedAddress;
 }
 
+static void Verify1541Profile() {
+    using namespace CDV3Loopback;
+    // Literal fixtures come from iPhone14,2 / 19E258 cache disassembly,
+    // not the production table. In particular its event prologue differs.
+    const uint8_t uuid[]={0x5a,0x56,0x59,0x81,0x1c,0x87,0x39,0x34,0x97,0xcc,0x5f,0x55,0x41,0xbc,0x43,0x8f};
+    const uint8_t update[]={0x7f,0x23,0x03,0xd5,0xe9,0x23,0xb9,0x6d,0xfc,0x6f,0x01,0xa9,0xfa,0x67,0x02,0xa9,0xf8,0x5f,0x03,0xa9};
+    const uint8_t event[]={0x7f,0x23,0x03,0xd5,0xff,0x03,0x02,0xd1,0xe9,0x23,0x03,0x6d,0xf8,0x5f,0x04,0xa9,0xf6,0x57,0x05,0xa9};
+    const auto *profile=SelectProfile(uuid,0x0100000c,0x80000002);
+    assert(profile && "15.4.1 APTransport profile missing");
+    assert(profile->guardedLayout);
+    assert(!SelectProfile(uuid,0x0100000c,0));
+    assert(!SelectProfile(uuid,0x0100000c,2));
+    assert(!SelectProfile(uuid,0x01000007,0x80000002));
+    uint8_t foreign[16];memcpy(foreign,uuid,sizeof(foreign));foreign[15]^=1;
+    assert(!SelectProfile(foreign,0x0100000c,0x80000002));
+    // Populate the independent image coordinates. A wrong table offset must
+    // fail the real entry gate, even when its fingerprint is otherwise right.
+    std::vector<uint8_t> image(0x60000);
+    memcpy(image.data()+0x5a05c,update,sizeof(update));
+    memcpy(image.data()+0x5d1f0,event,sizeof(event));
+    uintptr_t base=(uintptr_t)image.data();
+    bool mappingRejected=true;mappingCalls=0;deniedAddress=0;
+    assert(MappedEntriesMatch(*profile,base,image.size(),Mapping,&mappingRejected));
+    assert(mappingCalls==2 && !mappingRejected);
+    for(uintptr_t entry:{base+0x5a05c,base+0x5d1f0}) {
+        deniedAddress=entry;mappingCalls=0;mappingRejected=false;
+        assert(!MappedEntriesMatch(*profile,base,image.size(),Mapping,&mappingRejected) && mappingRejected);
+    }
+    deniedAddress=0;mappingCalls=0;
+    assert(!MappedEntriesMatch(*profile,base,0x5d1f0+19,Mapping) && !mappingCalls);
+    assert(!MappedEntriesMatch(*profile,UINTPTR_MAX-0x5a05c+1,image.size(),Mapping) && !mappingCalls);
+    for(size_t entry:{size_t(0x5a05c),size_t(0x5d1f0)}) {
+        for(size_t i=0;i<20;i++) {
+            image[entry+i]^=1;mappingRejected=true;
+            assert(!MappedEntriesMatch(*profile,base,image.size(),Mapping,&mappingRejected) && !mappingRejected);
+            image[entry+i]^=1;
+        }
+    }
+    assert(!MatchEntries(*profile,update+4,sizeof(update)-4,event,sizeof(event)));
+    assert(!MatchEntries(*profile,update,sizeof(update),event+4,sizeof(event)-4));
+    puts("19E258 guarded arm64e entries reject wrong CPU, mappings and instructions");
+}
+
 int main() {
     using namespace CDV3Loopback;
     // Independent firmware bytes, including each PACIBSP, from the matched
@@ -58,5 +101,6 @@ int main() {
     assert(legacy && !legacy->guardedLayout && legacy->updateOffset==0x55430 && legacy->eventOffset==0x57ec4);
     assert(legacy->prologueSize==16 && MatchEntries(*legacy,update+4,16,event+4,16));
     assert(!MatchEntries(*legacy,update,20,event,20));
+    Verify1541Profile();
     puts("Exact identity and full prologue gates passed");
 }

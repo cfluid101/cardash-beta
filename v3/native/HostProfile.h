@@ -4,8 +4,8 @@
 NSDictionary *CDV3InspectHostProfile(Class host,Class client,Class status,NSDictionary *legacyCompletion);
 BOOL CDV3UsesDictionaryHostProfile(NSDictionary *profile);
 
-// Requires the exact inspected iOS 16.0 host implementation and verifies every
-// supplied field both before and after secure coding. Never requests a session.
+// Requires one exact inspected dictionary-host image; all methods must match
+// that image. Verifies fields before/after secure coding; never requests a session.
 id CDV3CreateDictionaryHost(Class host,NSInteger port,NSString *key,NSError **error);
 
 #if CD_HOST_TEST

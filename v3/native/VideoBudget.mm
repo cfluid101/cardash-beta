@@ -126,7 +126,7 @@ static void BudgetImage(const mach_header *header,intptr_t slide) {
     }
     if (!profile) return;BudgetAttempted=true;
 #if !defined(__arm64e__)
-    if (profile->abi==CDV3VideoBudgetABI::CopyProperty) {BudgetReport(false,@"20A357 requires the arm64e adapter slice",10);return;}
+    if (profile->abi==CDV3VideoBudgetABI::CopyProperty) {BudgetReport(false,@"This CopyProperty profile requires the arm64e adapter slice",10);return;}
 #endif
     if ((uintptr_t)header>UINTPTR_MAX-profile->offset) {BudgetReport(false,@"Video entry address overflow",1);return;}
     auto entry=(uint8_t *)header+profile->offset;
@@ -150,7 +150,7 @@ static void BudgetImage(const mach_header *header,intptr_t slide) {
             BudgetReport(false,@"CopyProperty symbols or network key mismatch",7);return;
         }
         BudgetHook(entry,(void *)BudgetCopyProperty,(void **)&BudgetOriginalCopyProperty);
-        BudgetReport(BudgetOriginalCopyProperty!=nullptr,BudgetOriginalCopyProperty?@"20A357 CopyProperty":@"CopyProperty hook failed",BudgetOriginalCopyProperty?0:8);
+        BudgetReport(BudgetOriginalCopyProperty!=nullptr,BudgetOriginalCopyProperty?@"arm64e CopyProperty":@"CopyProperty hook failed",BudgetOriginalCopyProperty?0:8);
         return;
     }
     BudgetHook(entry,(void *)BudgetNetworkInfo,(void **)&BudgetOriginal);

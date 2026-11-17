@@ -7,9 +7,31 @@
 #include <cstring>
 
 static NSString *const CarKitPath=@"/System/Library/PrivateFrameworks/CarKit.framework/CarKit";
-static NSString *const DictionaryUUID=@"56E68CC1-FF26-3491-9ECA-D6974006E1A4";
-static NSString *const DictionaryProfile=@"ios16_0_20A357_arm64e_carkit";
+struct DictionaryHostProfile {
+    const char *uuid,*name,*referenceBuild,*artifactSHA256;
+    const char *replyInvoke,*replyDescriptor,*replySignature;
+};
+// These implementations share the inspected dictionary schema and BOOL/error
+// reply ABI. An OS version alone never selects a profile. Keep each image's
+// callback evidence together and require every method to belong to that image.
+static const DictionaryHostProfile DictionaryProfiles[]={
+    {"56E68CC1-FF26-3491-9ECA-D6974006E1A4","ios16_0_20A357_arm64e_carkit","20A357",
+     "9f365d2c1981854de208960d6971699eb6692c13f632d78048c8dc8c43f62134",
+     "0x1a6a70534","0x1d6a525a8","0x1a6a9d646"},
+    {"8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4","ios15_4_1_19E258_arm64e_carkit","19E258",
+     "9bd3b17e7292a8839a49678fdc47eab22724b0e7f191633e7126b07c24f7a0fb",
+     "0x198134580","0x1dc8d2dd0","0x198166676"},
+};
+static const DictionaryHostProfile *DictionaryProfileForUUID(NSString *uuid) {
+    for(const auto &profile:DictionaryProfiles)if([uuid isEqual:@(profile.uuid)])return &profile;
+    return nullptr;
+}
 static NSString *const LegacyInitializer=@"initWithDisplayName:wiredIPv6Addresses:wirelessIPv6Addresses:port:carplayWiFiUUID:deviceIdentifier:publicKey:sourceVersion:wiredCarPlaySimulator:";
+
+#if CD_HOST_TEST
+// Defined by the separately compiled fixture, never linked into the tweak.
+NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector);
+#endif
 
 @interface NSObject (CDV3DictionaryHost)
 - (id)initWithHostProperties:(id)properties;
@@ -59,7 +81,10 @@ static NSDictionary *MethodFact(Class cls,NSArray *spec,BOOL fixture) {
     BOOL types=method&&CDMethodMatches(cls,spec[0],[spec[1] UTF8String],spec[2],classMethod,NO);
     BOOL owned=[image isEqual:CarKitPath]&&[Bounded(cls?class_getImageName(cls):NULL) isEqual:CarKitPath];
 #if CD_HOST_TEST
-    if(fixture){owned=method!=NULL;uuid=DictionaryUUID;}
+    if(fixture){
+        NSDictionary *facts=CDV3HostFixtureMethodIdentity(cls,selector);
+        owned=method&&[facts[@"owned_by_carkit"] boolValue];uuid=facts[@"implementation_uuid"]?:@"";
+    }
 #else
     (void)fixture;
 #endif
@@ -67,10 +92,11 @@ static NSDictionary *MethodFact(Class cls,NSArray *spec,BOOL fixture) {
         @"available":@(method!=NULL),@"encoding":Bounded(method?method_getTypeEncoding(method):NULL),
         @"matches_types":@(types),@"owned_by_carkit":@(owned),@"implementation_uuid":uuid};
 }
-static BOOL AllDictionaryMethods(NSArray *methods) {
+static BOOL AllDictionaryMethods(NSArray *methods,const DictionaryHostProfile *profile) {
+    if(!profile)return NO;
     for(NSDictionary *method in methods)
         if(![method[@"matches_types"] boolValue]||![method[@"owned_by_carkit"] boolValue]||
-           ![method[@"implementation_uuid"] isEqual:DictionaryUUID])return NO;
+           ![method[@"implementation_uuid"] isEqual:@(profile->uuid)])return NO;
     return methods.count>0;
 }
 static NSDictionary *Inspect(Class host,Class client,Class status,NSDictionary *context,BOOL fixture) {
@@ -83,14 +109,15 @@ static NSDictionary *Inspect(Class host,Class client,Class status,NSDictionary *
     // Apple-owner rule for those operations rather than requiring CarKit IMPs.
     BOOL initChecks=Match(client,@"init","@",@[],NO,!fixture)&&Match(status,@"init","@",@[],NO,!fixture)&&
         Match(host,@"alloc","@",@[],YES,!fixture)&&Match(client,@"alloc","@",@[],YES,!fixture)&&Match(status,@"alloc","@",@[],YES,!fixture);
-    BOOL dictionaryMethods=AllDictionaryMethods(methods)&&initChecks;
     NSDictionary *legacy=context[@"legacy_completion"]?:@{};
+    const DictionaryHostProfile *dictionaryProfile=DictionaryProfileForUUID(legacy[@"framework_uuid"]);
+    BOOL dictionaryMethods=AllDictionaryMethods(methods,dictionaryProfile)&&initChecks;
     BOOL legacyMethods=Match(host,LegacyInitializer,"@",@[@"@",@"@",@"@",@"q",@"@",@"@",@"@",@"@",@"B"],NO,!fixture)&&
         Match(status,@"currentSession","@",@[],NO,!fixture)&&Match(client,@"cancelRequests","v",@[],NO,!fixture);
-    BOOL identity=[legacy[@"framework_uuid"] isEqual:DictionaryUUID]&&[legacy[@"class_image"] isEqual:CarKitPath]&&
+    BOOL identity=dictionaryProfile&&[legacy[@"class_image"] isEqual:CarKitPath]&&
         [legacy[@"implementation_image"] isEqual:CarKitPath];
     BOOL dictionary=identity&&dictionaryMethods;
-    NSString *selected=dictionary?DictionaryProfile:
+    NSString *selected=dictionary?@(dictionaryProfile->name):
         (legacyMethods&&[legacy[@"typed_completion_enabled"] boolValue]?@"legacy_ios16_6":@"unsupported");
     NSDictionary *completion=legacy;
     if(dictionary){
@@ -98,11 +125,11 @@ static NSDictionary *Inspect(Class host,Class client,Class status,NSDictionary *
             @"framework_uuid":legacy[@"framework_uuid"],@"class_image":legacy[@"class_image"],
             @"implementation_image":legacy[@"implementation_image"],@"observed_build":context[@"build"],
             @"observed_os_version":context[@"os_version"],@"inspected_architecture":@"arm64e",
-            @"reference_build":@"20A357",@"build_version_used_for_selection":@NO,
-            @"inspected_artifact_sha256":@"9f365d2c1981854de208960d6971699eb6692c13f632d78048c8dc8c43f62134",
+            @"reference_build":@(dictionaryProfile->referenceBuild),@"build_version_used_for_selection":@NO,
+            @"inspected_artifact_sha256":@(dictionaryProfile->artifactSHA256),
             @"exact_framework_implementation_inspected":@YES,@"completion_block_abi_inferred_from_method_encoding":@NO,
-            @"retained_block_signature":@"v20@?0B8@\"NSError\"12",@"reply_invoke_address":@"0x1a6a70534",
-            @"reply_descriptor_address":@"0x1d6a525a8",@"reply_signature_address":@"0x1a6a9d646",
+            @"retained_block_signature":@"v20@?0B8@\"NSError\"12",@"reply_invoke_address":@(dictionaryProfile->replyInvoke),
+            @"reply_descriptor_address":@(dictionaryProfile->replyDescriptor),@"reply_signature_address":@(dictionaryProfile->replySignature),
             @"daemon_identity_used_for_callback_abi":@NO,@"daemon_implementation_inspected":@NO,
             @"daemon_file":legacy[@"daemon_file"]?:@{}};
     }
@@ -116,7 +143,10 @@ NSDictionary *CDV3InspectHostProfile(Class host,Class client,Class status,NSDict
         @"legacy_completion":legacyCompletion?:@{}},NO);
 }
 BOOL CDV3UsesDictionaryHostProfile(NSDictionary *profile) {
-    return [profile[@"selected_profile"] isEqual:DictionaryProfile]&&[profile[@"profile_matched"] boolValue];
+    if(![profile[@"profile_matched"] boolValue])return NO;
+    for(const auto &candidate:DictionaryProfiles)
+        if([profile[@"selected_profile"] isEqual:@(candidate.name)])return YES;
+    return NO;
 }
 static id Failure(NSError **error,NSInteger code,NSString *message) {
     if(error)*error=[NSError errorWithDomain:@"CarDash.V3.HostProfile" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -142,7 +172,8 @@ static id Create(Class cls,NSInteger port,NSString *key,NSError **error,BOOL fix
         return Failure(error,1,@"Invalid host port or NSString public key");
     NSMutableArray *methods=[NSMutableArray array];
     for(NSArray *spec in HostRequirements())[methods addObject:MethodFact(cls,spec,fixture)];
-    if(!AllDictionaryMethods(methods)||!Match(cls,@"alloc","@",@[],YES,!fixture))
+    const DictionaryHostProfile *profile=DictionaryProfileForUUID(methods.firstObject[@"implementation_uuid"]);
+    if(!AllDictionaryMethods(methods,profile)||!Match(cls,@"alloc","@",@[],YES,!fixture))
         return Failure(error,2,@"Host method type, owner or implementation identity mismatch");
     @try {
         NSDictionary *properties=@{@"displayName":@"CarDash V3",@"wiredIPAddresses":@[@"::1"],

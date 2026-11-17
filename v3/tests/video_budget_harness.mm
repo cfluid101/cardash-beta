@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdio>
 #include <initializer_list>
+#include <vector>
 static uint32_t request=3000000;
 static uint32_t BudgetRequested() {return request;}
 static unsigned calls=0;
@@ -44,6 +45,23 @@ int main() {@autoreleasepool {
  assert(!CDV3VideoBudgetFindProfile(oldUUID,0x0100000c,0x80000002));
  assert(!CDV3VideoBudgetFindProfile(newUUID,0x01000007,0x80000002));
  newUUID[0]^=1;assert(!CDV3VideoBudgetFindProfile(newUUID,0x0100000c,0x80000002));assert(!CDV3VideoBudgetFindProfile(nullptr,0x0100000c,0));
+
+ // iPhone14,2 / 19E258 uses the same four-argument CopyProperty shape and
+ // relevant storage fields as 20A357, but a distinct UUID and entry address.
+ uint8_t ios15UUID[]={0x1b,0xfc,0xc2,0x63,0xe0,0xe7,0x3b,0x4d,0xb4,0xda,0x39,0xc0,0xd4,0x6d,0x35,0x94};
+ const uint8_t ios15Entry[]={0x7f,0x23,0x03,0xd5,0xff,0x83,0x04,0xd1,0xe9,0x23,0x0c,0x6d,0xfc,0x6f,0x0d,0xa9};
+ auto ios15Profile=CDV3VideoBudgetFindProfile(ios15UUID,0x0100000c,0x80000002);
+ assert(ios15Profile && "15.4.1 AirPlaySender profile missing");
+ assert(ios15Profile->abi==CDV3VideoBudgetABI::CopyProperty);
+ // Independent fixture coordinates ensure changing only a UUID cannot pass.
+ std::vector<uint8_t> ios15Image(0x127000);
+ memcpy(ios15Image.data()+0x1260e4,ios15Entry,sizeof(ios15Entry));
+ assert(ios15Profile->offset<=ios15Image.size()-sizeof(ios15Entry));
+ assert(!memcmp(ios15Image.data()+ios15Profile->offset,ios15Profile->prologue,sizeof(ios15Entry)));
+ assert(!CDV3VideoBudgetFindProfile(ios15UUID,0x0100000c,0));
+ assert(!CDV3VideoBudgetFindProfile(ios15UUID,0x0100000c,2));
+ assert(!CDV3VideoBudgetFindProfile(ios15UUID,0x01000007,0x80000002));
+ ios15UUID[15]^=1;assert(!CDV3VideoBudgetFindProfile(ios15UUID,0x0100000c,0x80000002));
 
  BudgetOriginalCopyProperty=CopyProperty;BudgetDerivedStorage=Derived;derivedState=state;readableState=state;
  BudgetNetworkInfoKey=CFSTR("NetworkInfo");state[0x150]=state[0x152]=1;

@@ -197,7 +197,7 @@ static void Image(const mach_header *header,intptr_t slide) {
     attempted=true;
     uint8_t *base=(uint8_t *)header;
 #if !defined(__arm64e__)
-    if(profile->guardedLayout) {Report(NO,@"The exact 20A357 profile requires the arm64e adapter slice",TransportReason::AdapterArchitecture);return;}
+    if(profile->guardedLayout) {Report(NO,@"This exact firmware profile requires the arm64e adapter slice",TransportReason::AdapterArchitecture);return;}
 #endif
     DerivedStorage=(void *(*)(CFTypeRef))dlsym(RTLD_DEFAULT,"CMBaseObjectGetDerivedStorage");
     auto executable=[](uintptr_t address,size_t size){return CDV3AudioMapped(address,size,VM_PROT_READ|VM_PROT_EXECUTE);};

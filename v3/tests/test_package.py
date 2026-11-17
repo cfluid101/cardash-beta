@@ -6,6 +6,8 @@ import plistlib
 import re
 import subprocess
 import tempfile
+import hashlib
+import json
 ROOT=Path(__file__).resolve().parents[2]
 class PackageTest(unittest.TestCase):
  def test_rootless_payload_ownership_paths_and_credentials(self):
@@ -14,7 +16,15 @@ class PackageTest(unittest.TestCase):
    header=data[at:at+60];n=int(header[48:58]);name=header[:16].decode().strip().rstrip('/');members[name]=data[at+60:at+60+n];at+=60+n+(n%2)
   with tarfile.open(fileobj=io.BytesIO(members['data.tar.xz'])) as tar:
    app=plistlib.loads(tar.extractfile('./var/jb/Applications/CarDashV3.app/Info.plist').read())
-   self.assertEqual(app['MinimumOSVersion'],'16.0')
+   self.assertEqual(app['MinimumOSVersion'],'15.4.1')
+   self.assertEqual(app['CDV3PackageVersion'],version)
+   manifest=json.loads(tar.extractfile('./var/jb/usr/lib/cardash-v3/manifest.json').read())
+   self.assertEqual(manifest['version'],version)
+   self.assertEqual(manifest['minimum_ios'],'15.4.1')
+   self.assertFalse(manifest['this_build_device_tested'])
+   self.assertEqual({target['build'] for target in manifest['native_targets']},{'19E258','20A357','20G75'})
+   for name,digest in manifest['files'].items():
+    self.assertEqual(hashlib.sha256(tar.extractfile('./'+name).read()).hexdigest(),digest,name)
    job=plistlib.loads(tar.extractfile('./var/jb/Library/LaunchDaemons/com.cfluid.cardash.v3.plist').read())
    self.assertEqual(job['JetsamProperties']['MemoryLimit'],128)
    self.assertEqual(job['ProcessType'],'Interactive')
@@ -39,7 +49,33 @@ class PackageTest(unittest.TestCase):
      subprocess.run(['xcrun','lipo',str(adapter),'-thin',architecture,'-output',str(thin)],check=True,capture_output=True)
      build=subprocess.check_output(['xcrun','vtool','-show-build',str(thin)],text=True)
      self.assertRegex(build,r'platform\s+IOS\b')
-     self.assertRegex(build,r'minos\s+16\.0\b','Neither adapter slice may raise the iOS deployment floor')
+     self.assertRegex(build,r'minos\s+15\.4\.1\b','Neither adapter slice may raise the iOS deployment floor')
+   # Every native component must be launchable within the declared iOS 15.4.1
+   # deployment contract, not only the universal injected adapter.
+   with tempfile.TemporaryDirectory() as tmp:
+    # The app's code signature seals Info.plist and its resource envelope;
+    # verify the whole bundle, preserving its signing context.
+    prefix='./var/jb/Applications/CarDashV3.app/'
+    bundle=Path(tmp)/'CarDashV3.app'
+    for item in tar.getmembers():
+     if item.isfile() and item.name.startswith(prefix):
+      relative=Path(item.name[len(prefix):]);self.assertNotIn('..',relative.parts)
+      destination=bundle/relative;destination.parent.mkdir(parents=True,exist_ok=True)
+      destination.write_bytes(tar.extractfile(item).read())
+    subprocess.run(['codesign','--verify','--strict','--all-architectures',str(bundle)],check=True,capture_output=True)
+    checked=0
+    for item in tar.getmembers():
+     if not item.isfile():continue
+     blob=tar.extractfile(item).read()
+     if blob[:4] not in (b'\xcf\xfa\xed\xfe',b'\xca\xfe\xba\xbe'):continue
+     binary=Path(tmp)/('image-'+str(checked));binary.write_bytes(blob);checked+=1
+     architectures=subprocess.check_output(['xcrun','lipo','-archs',str(binary)],text=True).split()
+     for architecture in architectures:
+      build=subprocess.check_output(['xcrun','otool','-arch',architecture,'-l',str(binary)],text=True)
+      self.assertRegex(build,r'minos\s+15\.4\.1\b',item.name+' '+architecture+' exceeds tester deployment target')
+     if not item.name.startswith(prefix):
+      subprocess.run(['codesign','--verify','--strict','--all-architectures',str(binary)],check=True,capture_output=True)
+    self.assertEqual(checked,9,'Audit must cover app, adapter, all helpers and four bridges')
    for item in tar.getmembers():
     self.assertEqual((item.uid,item.gid),(0,0));self.assertFalse(item.issym() or item.islnk());self.assertNotIn('..',Path(item.name).parts)
     if not item.isfile():continue

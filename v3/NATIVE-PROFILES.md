@@ -1,6 +1,31 @@
 # Native implementation profiles — compatibility beta 1
 
-Selection uses observed binary identity, architecture, method ownership/types and instruction fingerprints. Installation has no model or firmware allowlist. The target metadata came from a diagnostic export reporting iPhone15,3 / iOS 16.0 / 20A357; those strings are not substitute checks for implementation identity.
+Selection uses observed binary identity, architecture, method ownership/types and instruction fingerprints. Installation has no model or firmware allowlist. Beta 8 adds the 19E258 implementations below alongside the existing 20G75 and 20A357 paths. Device/build strings are context, not substitute checks for implementation identity.
+
+## Beta 8: iPhone 13 Pro / iOS 15.4.1 / 19E258
+
+The Apple restore archive `iPhone14,2_15.4.1_19E258_Restore.ipsw` was downloaded and checked against its expected size and SHA256: 6,518,149,573 bytes, `26018ab582046bf9e5cc05e84a9a41fd2d653bce0bde809478678b6e90245937`. BuildManifest and the system version identify iPhone14,2 / 15.4.1 / 19E258. The system image was mounted read-only for cache inspection. These are static firmware observations, not device execution.
+
+| Framework | UUID | Added behavior |
+|---|---|---|
+| CarKit | `8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4` | Existing dictionary-host schema and typed BOOL/error completion |
+| APTransport | `5A565981-1C87-3934-97CC-5F5541BC438F` | Guarded update/event hooks at image offsets `0x5a05c` / `0x5d1f0` |
+| MediaExperience | `578E182E-810F-39CE-A068-C026D4288122` | Verified setter decoding and existing owned audio lease |
+| AirPlaySender | `1BFCC263-E0E7-3B4D-B4DA-39C0D46D3594` | Four-argument CopyProperty hook at image offset `0x1260e4` |
+
+All four images are arm64e, CPU type `0x0100000c`, subtype `0x80000002`. The injected paths require the arm64e slice. The standalone arm64 session helper validates actual CarKit method owners, types and implementation UUIDs.
+
+CarKit retains `startSessionWithHost:completion:` with encoding `v32@0:8@16@?24`. Its reply block invoke `0x198134580`, descriptor `0x1dc8d2dd0` and signature `0x198166676` establish `v20@?0B8@"NSError"12`, independently of the method's generic block encoding. The dictionary constructor reads the same nine wire keys as the 20A357 branch; all 16 checked method contracts match. The long legacy initializer is absent. Selection and construction require one consistent known framework UUID across their required methods, and preserve ownership checks and secure-archive readback. CarKit's reconstructed artifact SHA256 is `9bd3b17e7292a8839a49678fdc47eab22724b0e7f191633e7126b07c24f7a0fb` (extraction output, not an original standalone IPSW file).
+
+APTransport base is `0x1b65ec000`. Full 20-byte entry fingerprints are `7f2303d5e923b96dfc6f01a9fa6702a9f85f03a9` and `7f2303d5ff0302d1e923036df85f04a9f65705a9`, including PACIBSP. The fields used by the shared wrapper were traced at host `+0xa8`, time `+0xb0`, transport `+0xb8`, interface `+0xc8`, map `+0x98`, state `+0xa0`, and USB fields `+0x40/+0x48/+0x50/+0x58`. The native USB-removal path releases/clears the host; the event block releases its captured helper. Existing ownership, final-reference protection and restoration remain required. This does not assert an identical full structure layout.
+
+MediaExperience text base is `0x19ae4f000`, setter `0x19aefc58c`, flag `0x1d7636ad0`. Exact setter bytes `c8391ed008e1219100610939c0035fd6` decode the flag from ADRP/ADD/STRB. Runtime executable/writable mappings, instruction identity, slide handling and lease restoration remain checked.
+
+AirPlaySender's CopyProperty entry has bytes `7f2303d5ff8304d1e9230c6dfc6f0da9`. Direct data flow and the signature string establish `(CMBaseObjectRef, CFStringRef, CFAllocatorRef, void *) -> OSStatus`; NetworkInfo is implemented inside that call. Display `+0x38` and CarPlay/USB flags `+0x150/+0x152` are independently corroborated by stream creation. The existing wrapper preserves original status/output ownership, allocator and other properties, and limits the override to the owned display and live budget lease. Its reconstructed artifact SHA256 is `deb44b08667cdf66d310520faaf0c0c3498d305d621c8bfaac6498621ed372c0`.
+
+The added tables retain the original 20G75/20A357 constants and guards. Host fixtures test new/old selection, altered instructions and architecture, mixed/foreign/unknown method identities, actual fixture host construction and archive readback, and the shared wrapper lifecycle. They do not run Apple's frameworks. Physical injection/PAC behavior, service startup, native handshake/video, input, phone/Bluetooth audio, locking, recovery and cleanup remain acceptance tests for all three phones on beta 8. Unknown identities remain unavailable; no guessed-offset fallback is added.
+
+## Earlier 20A357 profile evidence
 
 ## Target artifacts and evidence provenance
 

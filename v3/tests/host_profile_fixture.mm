@@ -3,8 +3,28 @@
 #include <unistd.h>
 
 static NSString *Mode;
+static NSString *FixtureUUID;
 static NSUInteger Initializations;
+static NSUInteger Encodings;
+static NSUInteger Decodings;
 static void Require(BOOL value,const char *message){if(!value){fprintf(stderr,"%s\n",message);exit(1);}}
+
+// Only image identity is substituted: runtime methods, type checks, host
+// construction and secure archiving below are real. Production builds never
+// link this provider. Mixed-image fixtures catch accepting any known UUID
+// independently rather than requiring one consistent inspected image.
+NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
+    (void)cls;
+    NSString *uuid=FixtureUUID;BOOL owned=YES;
+    if(selector==@selector(port)){
+        if([Mode containsString:@"mixed-method-uuid"])
+            uuid=[FixtureUUID isEqual:@"8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4"]?
+                @"56E68CC1-FF26-3491-9ECA-D6974006E1A4":@"8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4";
+        if([Mode containsString:@"unknown-method-uuid"])uuid=@"UNKNOWN";
+        if([Mode containsString:@"foreign-method-owner"])owned=NO;
+    }
+    return @{@"implementation_uuid":uuid,@"owned_by_carkit":@(owned)};
+}
 
 @interface CDHost16:NSObject<NSSecureCoding>
 @property(nonatomic,copy) NSString *displayName;
@@ -40,6 +60,7 @@ static void Require(BOOL value,const char *message){if(!value){fprintf(stderr,"%
     }return self;
 }
 -(void)encodeWithCoder:(NSCoder *)coder {
+    Encodings++;
     if([Mode isEqual:@"archive-throws"])@throw [NSException exceptionWithName:@"FixtureArchiveFailure" reason:@"test" userInfo:nil];
     [coder encodeObject:self.displayName forKey:@"displayName"];
     [coder encodeObject:self.wiredIPv6Addresses forKey:@"wiredIPAddresses"];
@@ -51,6 +72,7 @@ static void Require(BOOL value,const char *message){if(!value){fprintf(stderr,"%
     [coder encodeObject:@(self.wiredCarPlaySimulator) forKey:@"wiredCarPlaySimulator"];
 }
 -(id)initWithCoder:(NSCoder *)coder {
+    Decodings++;
     if((self=[super init])){
         NSSet *arrays=[NSSet setWithObjects:NSArray.class,NSString.class,nil];
         _displayName=[coder decodeObjectOfClass:NSString.class forKey:@"displayName"];
@@ -94,25 +116,39 @@ static NSDictionary *Context(NSString *uuid,NSString *build,BOOL legacy) {
 static id WrongMethod(id self,SEL selector){(void)self;(void)selector;_exit(98);}
 int main(int argc,char **argv){@autoreleasepool{
     Require(argc==2,"Missing mode");Mode=@(argv[1]);
-    NSString *uuid=@"56E68CC1-FF26-3491-9ECA-D6974006E1A4";
+    BOOL ios15=[Mode hasSuffix:@"-ios15"];
+    if(ios15)Mode=[Mode substringToIndex:Mode.length-6];
+    NSString *uuid=ios15?@"8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4":@"56E68CC1-FF26-3491-9ECA-D6974006E1A4";
+    FixtureUUID=uuid;
+    NSString *build=ios15?@"19E258":@"20A357";
+    NSString *profileName=ios15?@"ios15_4_1_19E258_arm64e_carkit":@"ios16_0_20A357_arm64e_carkit";
     Class host=objc_getClass("CDHost16"),client=objc_getClass("CDClient"),status=objc_getClass("CDStatus");
     if([Mode hasPrefix:@"profile-"]){
-        NSDictionary *context=Context(uuid,@"20A357",NO);NSString *expected=@"unsupported";
-        if([Mode isEqual:@"profile-new"]){expected=@"ios16_0_20A357_arm64e_carkit";}
+        NSDictionary *context=Context(uuid,build,NO);NSString *expected=@"unsupported";
+        if([Mode isEqual:@"profile-new"]){expected=profileName;}
         else if([Mode isEqual:@"profile-legacy"]){host=objc_getClass("CDLegacyHost");context=Context(@"E7918412-DF06-3E57-9E4E-C031AD370605",@"20G75",YES);expected=@"legacy_ios16_6";}
         else if([Mode isEqual:@"profile-unknown"]){context=Context(@"UNKNOWN",@"20A357",NO);}
-        else if([Mode isEqual:@"profile-different-build"]){NSMutableDictionary *changed=[Context(uuid,@"ANOTHER_BUILD",NO) mutableCopy];changed[@"os_version"]=@"ANOTHER_VERSION";context=changed;expected=@"ios16_0_20A357_arm64e_carkit";}
+        else if([Mode isEqual:@"profile-different-build"]){NSMutableDictionary *changed=[Context(uuid,@"ANOTHER_BUILD",NO) mutableCopy];changed[@"os_version"]=@"ANOTHER_VERSION";context=changed;expected=profileName;}
         else if([Mode isEqual:@"profile-legacy-unverified"]){host=objc_getClass("CDLegacyHost");context=Context(@"E7918412-DF06-3E57-9E4E-C031AD370605",@"20G75",NO);}
         else if([Mode isEqual:@"profile-wrong-start-type"]){Class bad=objc_allocateClassPair(client,"WrongClient",0);class_addMethod(bad,@selector(startSessionWithHost:completion:),(IMP)WrongMethod,"v32@0:8@16@24");objc_registerClassPair(bad);client=bad;}
+        else if([Mode isEqual:@"profile-mixed-method-uuid"]||[Mode isEqual:@"profile-unknown-method-uuid"]||[Mode isEqual:@"profile-foreign-method-owner"]){}
+        else if([Mode isEqual:@"profile-foreign-class-image"]||[Mode isEqual:@"profile-foreign-implementation-image"]){
+            NSMutableDictionary *changed=[context mutableCopy],*identity=[context[@"legacy_completion"] mutableCopy];
+            identity[[Mode isEqual:@"profile-foreign-class-image"]?@"class_image":@"implementation_image"]=@"/tmp/foreign.dylib";
+            changed[@"legacy_completion"]=identity;context=changed;
+        }
         else Require(NO,"Unknown profile scenario");
         NSDictionary *profile=CDV3FixtureHostProfile(host,client,status,context);
         if(![profile[@"selected_profile"] isEqual:expected])fprintf(stderr,"%s\n",profile.description.UTF8String);
         Require([profile[@"selected_profile"] isEqual:expected],"Incorrect profile selection");
+        Require(CDV3UsesDictionaryHostProfile(profile)==[expected isEqual:profileName],"Wrong dictionary construction branch");
         if([Mode isEqual:@"profile-new"]){
             NSDictionary *completion=profile[@"completion_identity"];
             Require([completion[@"typed_completion_enabled"] boolValue],"Direct completion evidence was not accepted");
             Require(![completion[@"daemon_identity_used_for_callback_abi"] boolValue]&&![completion[@"daemon_implementation_inspected"] boolValue],"Daemon evidence overstated");
             Require([completion[@"retained_block_signature"] isEqual:@"v20@?0B8@\"NSError\"12"],"Wrong block ABI");
+            Require([completion[@"framework_uuid"] isEqual:uuid]&&[completion[@"reference_build"] isEqual:build],"Completion evidence belongs to another profile");
+            Require([completion[@"reply_invoke_address"] isEqual:ios15?@"0x198134580":@"0x1a6a70534"],"Wrong inspected reply implementation");
         }
         if([Mode isEqual:@"profile-legacy"])Require([profile[@"completion_identity"] isEqual:context[@"legacy_completion"]],"Legacy evidence changed");
         Require(Initializations==0,"Inspector constructed host");
@@ -122,11 +158,16 @@ int main(int argc,char **argv){@autoreleasepool{
         if([Mode isEqual:@"invalid-key-type"])key=(id)[key dataUsingEncoding:NSUTF8StringEncoding];
         if([Mode isEqual:@"invalid-key-hex"])key=[key uppercaseString];
         id value=[Mode isEqual:@"production-owner-reject"]?CDV3CreateDictionaryHost(host,62000,key,&error):CDV3CreateDictionaryHostFixture(host,62000,key,&error);
-        if([Mode isEqual:@"valid"]){if(error)fprintf(stderr,"%s\n",error.description.UTF8String);Require(value!=nil&&error==nil,"Valid host rejected");Require(Initializations==1,"Wrong initialization count");}
+        if([Mode isEqual:@"valid"]){
+            if(error)fprintf(stderr,"%s\n",error.description.UTF8String);
+            Require(value!=nil&&error==nil,"Valid host rejected");Require(Initializations==1,"Wrong initialization count");
+            Require(Encodings==1&&Decodings==1,"Host fields were not checked through an actual secure archive");
+        }
         else{
             Require(value==nil&&error!=nil,"Invalid host accepted");
-            if([Mode isEqual:@"wrong-method-type"]||[Mode hasPrefix:@"invalid-key"]||[Mode isEqual:@"production-owner-reject"])
-                Require(Initializations==0,"Rejected input reached constructor");
+            if([Mode isEqual:@"wrong-method-type"]||[Mode hasPrefix:@"invalid-key"]||[Mode isEqual:@"production-owner-reject"]||
+               [Mode containsString:@"method-uuid"]||[Mode isEqual:@"foreign-method-owner"])
+                Require(Initializations==0&&Encodings==0&&Decodings==0,"Rejected identity or input reached constructor/archive");
         }
     }
     puts("OK");return 0;

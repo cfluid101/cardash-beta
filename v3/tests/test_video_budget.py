@@ -92,7 +92,8 @@ class BudgetTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as folder:
    path=Path(folder)/'budget';source=Path(__file__).with_name('video_budget_harness.mm')
    subprocess.run(['xcrun','clang++','-std=c++17','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror',str(source),'-framework','Foundation','-o',str(path)],check=True)
-   subprocess.run([str(path)],check=True,capture_output=True)
+   result=subprocess.run([str(path)],capture_output=True,text=True)
+   self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
 class BudgetStatusTest(unittest.TestCase):
  def status(self,reason,ready=1,pid=1234,again=None):

@@ -40,7 +40,7 @@ from compatibility import inventory_status, inspect_session_helper
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.7'
+VERSION='3.0.0-beta.8'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
 # A browser that has shown CarPlay may be silent this long before its native
