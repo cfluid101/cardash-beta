@@ -1,3 +1,7 @@
+# Beta 9 additions
+
+Export adds a diagnostic-only `compatibility_summary`: independent session, transport, video and audio status, observed UUID/CPU facts, live-publisher consistency and stable failure codes. Unknown framework, instruction mismatch, missing hook provider and unimplemented lifecycle have distinct codes. `ready_for_device_trial` is not full device compatibility. Startup gates emit `compatibility_failure`; helper errors preserve stage/domain/code. Offline export still records service and path failures.
+
 > Historical diagnostics 3 collection guide. The current full compatibility package is described in [COMPATIBILITY-BETA.md](COMPATIBILITY-BETA.md); install that package and test normally, then export. The bounded report behavior described below is retained.
 
 # HTTPS3 compatibility diagnostics 3

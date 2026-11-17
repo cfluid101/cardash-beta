@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstdio>
 #include <vector>
+#include <cstdlib>
 
 static uintptr_t deniedAddress=0;
 static unsigned mappingCalls=0;
@@ -52,7 +53,61 @@ static void Verify1541Profile() {
     puts("19E258 guarded arm64e entries reject wrong CPU, mappings and instructions");
 }
 
-int main() {
+static unsigned Nibble(char c) {
+    if(c>='0' && c<='9')return c-'0';
+    if(c>='a' && c<='f')return c-'a'+10;
+    if(c>='A' && c<='F')return c-'A'+10;
+    assert(false);return 0;
+}
+static std::vector<uint8_t> Hex(const char *text) {
+    std::vector<uint8_t> result;assert(strlen(text)%2==0);
+    while(*text){result.push_back((Nibble(text[0])<<4)|Nibble(text[1]));text+=2;}
+    return result;
+}
+static void VerifyFixture(char **arg) {
+    using namespace CDV3Loopback;
+    const auto uuid=Hex(arg[1]),update=Hex(arg[6]),event=Hex(arg[7]);
+    const uint32_t cpu=(uint32_t)strtoul(arg[2],nullptr,0),sub=(uint32_t)strtoul(arg[3],nullptr,0);
+    const size_t updateOffset=strtoull(arg[4],nullptr,0),eventOffset=strtoull(arg[5],nullptr,0);
+    assert(uuid.size()==16 && update.size()==20 && event.size()==20);
+    const auto profile=SelectProfile(uuid.data(),cpu,sub);
+    assert(profile && profile->guardedLayout);
+    assert(AdapterMatches(*profile,sub==0x80000002));
+    assert(!AdapterMatches(*profile,sub!=0x80000002));
+    assert(CanHook(*profile)==bool(atoi(arg[9])));
+    assert(!SelectProfile(uuid.data(),0x1000007,sub));
+    assert(!SelectProfile(uuid.data(),cpu,sub^0x80000002));
+    auto wrong=uuid;wrong[0]^=1;assert(!SelectProfile(wrong.data(),cpu,sub));
+    assert(!strcmp(LayoutName(profile->layout),arg[8]));
+    const auto layout=LayoutFor(profile->layout);
+    if(profile->layout==LayoutFamily::RequestIdentifier) {
+        assert(layout.hostTime==0xb8 && layout.selectedTransport==0xc0 && layout.selectedInterface==0xd0 && layout.stateSize==0xd8 && layout.requestIdentifier==0xb0);
+    } else if(profile->layout==LayoutFamily::Middle) {
+        assert(layout.hostTime==0xb0 && layout.selectedTransport==0xb8 && layout.selectedInterface==0xc8 && layout.stateSize==0xd0 && !layout.requestIdentifier);
+    } else {
+        assert(!CanHook(*profile) && layout.hostTime==0xb0 && !layout.selectedTransport && layout.selectedInterface==0xc0);
+    }
+    std::vector<uint8_t> image(eventOffset+64);
+    memcpy(image.data()+updateOffset,update.data(),20);memcpy(image.data()+eventOffset,event.data(),20);
+    const auto base=(uintptr_t)image.data();mappingCalls=0;deniedAddress=0;
+    assert(MappedEntriesMatch(*profile,base,image.size(),Mapping) && mappingCalls==2);
+    bool mappingRejected=false;
+    deniedAddress=base+eventOffset;
+    assert(!MappedEntriesMatch(*profile,base,image.size(),Mapping,&mappingRejected) && mappingRejected);
+    deniedAddress=0;
+    assert(!MappedEntriesMatch(*profile,base,eventOffset+19,Mapping));
+    assert(!MappedEntriesMatch(*profile,UINTPTR_MAX-updateOffset+1,image.size(),Mapping));
+    for(size_t offset:{updateOffset,eventOffset})for(size_t i=0;i<20;i++) {
+        image[offset+i]^=1;mappingRejected=true;
+        assert(!MappedEntriesMatch(*profile,base,image.size(),Mapping,&mappingRejected) && !mappingRejected);
+        image[offset+i]^=1;
+    }
+    puts("Firmware fixture identity, layout, bounds and full entry bytes passed");
+}
+
+int main(int argc,char **argv) {
+    if(argc==10){VerifyFixture(argv);return 0;}
+    assert(argc==1);
     using namespace CDV3Loopback;
     // Independent firmware bytes, including each PACIBSP, from the matched
     // APTransport image retained in the 20A357 research evidence.
@@ -99,6 +154,7 @@ int main() {
     const uint8_t legacyUUID[]={0xbc,0xc4,0x74,0xf5,0x27,0x45,0x36,0x52,0x99,0x5f,0xa0,0x6f,0x65,0x0f,0x76,0xfc};
     auto legacy=SelectProfile(legacyUUID,0x0100000c,0);
     assert(legacy && !legacy->guardedLayout && legacy->updateOffset==0x55430 && legacy->eventOffset==0x57ec4);
+    assert(AdapterMatches(*legacy,false) && AdapterMatches(*legacy,true));
     assert(legacy->prologueSize==16 && MatchEntries(*legacy,update+4,16,event+4,16));
     assert(!MatchEntries(*legacy,update,20,event,20));
     Verify1541Profile();

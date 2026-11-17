@@ -1,0 +1,83 @@
+{
+  "provenance": "Independent exact firmware inventory from FluidDrive compatibility-sweep-2026-11-16 and prior 21G101 cache evidence; reconstructed hashes identify local reconstruction outputs. All entry prefixes were compared against original cache bytes. Hookable is an implementation expectation, not device validation.",
+  "samples": [
+    {
+      "sample": "iPhone10,2_16.0_20A362",
+      "uuid": "A9639123-49B5-32ED-AA1E-727A3D698D12",
+      "cpu_type": "0x100000c",
+      "cpu_subtype": "0x0",
+      "sha256": "3f2dde8268bd6d8d75d9c037b076e7f36c106d33a19b7417717a020eebd8efb7",
+      "update_offset": "0x548d8",
+      "event_offset": "0x575a4",
+      "update_prefix": "e923b96dfc6f01a9fa6702a9f85f03a9f65704a9",
+      "event_prefix": "ff8302d1e923046dfa6705a9f85f06a9f65707a9",
+      "layout": "Middle",
+      "hookable": true
+    },
+    {
+      "sample": "iPhone14,2_15.0_19A346",
+      "uuid": "00DF1ADF-7D40-3074-955D-4B8E88288947",
+      "cpu_type": "0x100000c",
+      "cpu_subtype": "0x80000002",
+      "sha256": "433d1da556e79f190dc3fe60c6ade63b4c0440c7440f5dfbdc075f71a32bc181",
+      "update_offset": "0x59af8",
+      "event_offset": "0x5c9d4",
+      "update_prefix": "7f2303d5e923b96dfc6f01a9fa6702a9f85f03a9",
+      "event_prefix": "7f2303d5ff0302d1e923036df85f04a9f65705a9",
+      "layout": "EarlyUnsupported",
+      "hookable": false
+    },
+    {
+      "sample": "iPhone14,2_15.6.1_19G82",
+      "uuid": "E3F27758-A6C2-308A-BEA9-50343F54E598",
+      "cpu_type": "0x100000c",
+      "cpu_subtype": "0x80000002",
+      "sha256": "66610222ac46003a561e12f638f91e02a6983fd60a7d2a85344455d578a2e168",
+      "update_offset": "0x59f48",
+      "event_offset": "0x5d0dc",
+      "update_prefix": "7f2303d5e923b96dfc6f01a9fa6702a9f85f03a9",
+      "event_prefix": "7f2303d5ff4302d1e923036dfa6704a9f85f05a9",
+      "layout": "Middle",
+      "hookable": true
+    },
+    {
+      "sample": "iPhone14,2_16.6_20G75",
+      "uuid": "A0DE9FB9-A591-38D5-A878-9213E3C152F0",
+      "cpu_type": "0x100000c",
+      "cpu_subtype": "0x80000002",
+      "sha256": "0a11f754b682b5f163f3536b1cef64e926f73d22389892feab74bfc42046ee2b",
+      "update_offset": "0x5b9c4",
+      "event_offset": "0x5e770",
+      "update_prefix": "7f2303d5e923b96dfc6f01a9fa6702a9f85f03a9",
+      "event_prefix": "7f2303d5ff8302d1e923046dfa6705a9f85f06a9",
+      "layout": "Middle",
+      "hookable": true
+    },
+    {
+      "sample": "iPhone14,2_17.0_21A329",
+      "uuid": "9B9E36BA-37C7-351D-BD6C-B254AE544310",
+      "cpu_type": "0x100000c",
+      "cpu_subtype": "0x80000002",
+      "sha256": "250d3f40bdc5db0d7af3f45afac0c7e160085be5bdc7bc0c917d74852453407e",
+      "update_offset": "0x6b0a0",
+      "event_offset": "0x6df14",
+      "update_prefix": "7f2303d5e923b96dfc6f01a9fa6702a9f85f03a9",
+      "event_prefix": "7f2303d5ff0303d1e923056dfc6f06a9fa6707a9",
+      "layout": "Middle",
+      "hookable": true
+    },
+    {
+      "sample": "iPhone14,5_17.6.1_21G93-21G101",
+      "uuid": "7DFA8D70-2519-321F-B2F1-4E96B9F30A88",
+      "cpu_type": "0x0100000c",
+      "cpu_subtype": "0x80000002",
+      "sha256": "5f7a91d8d6f11c15ace130544c860182e1715c8a6177a9ec25093734a3ed7919",
+      "update_offset": "0x6e0b4",
+      "event_offset": "0x71340",
+      "update_prefix": "7f2303d5e923b96dfc6f01a9fa6702a9f85f03a9",
+      "event_prefix": "7f2303d5ff0303d1e923056dfc6f06a9fa6707a9",
+      "layout": "RequestIdentifier",
+      "hookable": true
+    }
+  ]
+}

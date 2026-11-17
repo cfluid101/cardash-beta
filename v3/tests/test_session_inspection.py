@@ -46,7 +46,11 @@ class SessionInspectionTest(unittest.TestCase):
 @end
 @implementation CARSessionRequestClient
 + (void)initialize {_exit(93);}
+#ifdef REQUEST_ID
+- (void)startSessionWithHost:(id)h requestIdentifier:(NSUUID *)r completion:(void(^)(bool,NSError *))c {_exit(94);}
+#else
 - (void)startSessionWithHost:(id)h completion:(void(^)(bool,NSError *))c {_exit(94);}
+#endif
 #ifdef MISMATCH
 - (long long)cancelRequests {_exit(95);}
 #else
@@ -63,8 +67,10 @@ class SessionInspectionTest(unittest.TestCase):
         cls.fixture = Path(cls.tmp.name) / 'Fixture.dylib'
         cls.mismatch_fixture = Path(cls.tmp.name) / 'Mismatch.dylib'
         cls.dictionary_fixture = Path(cls.tmp.name) / 'Dictionary.dylib'
+        cls.request_id_fixture = Path(cls.tmp.name) / 'RequestID.dylib'
         for output, extra in ((cls.fixture, []), (cls.mismatch_fixture, ['-DMISMATCH']),
-                              (cls.dictionary_fixture, ['-DDICTIONARY_ONLY'])):
+                              (cls.dictionary_fixture, ['-DDICTIONARY_ONLY']),
+                              (cls.request_id_fixture, ['-DDICTIONARY_ONLY', '-DREQUEST_ID'])):
             subprocess.run([*cls.flags, '-dynamiclib', *extra, str(fixture),
                             '-framework', 'Foundation', '-o', str(output)],
                            check=True, capture_output=True)
@@ -185,6 +191,18 @@ __attribute__((used,section("__DATA,__interpose"))) static struct {
         self.assertTrue(initializer['available'])
         self.assertTrue(initializer['matches_types'])
         self.assertFalse(report['host_profile']['profile_matched'])
+
+    def test_new_request_selector_is_inspected_without_initializing_classes(self):
+        report = self.inspect_fixture(self.request_id_fixture)
+        self.assertFalse(report['methods'][1]['available'])
+        request = report['alternate_request_method']
+        self.assertTrue(request['available'])
+        self.assertTrue(request['matches_expected_types'])
+        self.assertEqual(request['argument_types'], ['@', '@', '@?'])
+        self.assertEqual(report['completion_identity']['framework_uuid'], report['framework']['image_uuid'])
+        self.assertFalse(report['completion_identity']['typed_completion_enabled'])
+        self.assertEqual(len(report['completion_identity']['daemon_candidates']), 2)
+        self.assertEqual(report['host_profile']['diagnostic_code'], 'unknown_carkit_identity')
 
     def test_missing_framework_is_reported_without_losing_identity_facts(self):
         report = self.inspect_fixture(Path(self.tmp.name) / 'Missing.dylib')

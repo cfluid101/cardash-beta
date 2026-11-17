@@ -174,7 +174,7 @@ static bool AudioPIDAlive(uint64_t pid) {
 static void AudioReport(bool ready,NSString *reason,uint8_t code=2) {
     if (AudioReadyToken>=0)
         notify_set_state(AudioReadyToken,((uint64_t)getpid()<<8)|(ready?1:code));
-    NSLog(@"CarDashV3Audio ready=%d %@",ready,reason);
+    NSLog(@"CarDashV3Audio ready=%d code=%u %@",ready,ready?1:code,reason);
 }
 static void PublishAudioState(uint8_t bits) {
     if (AudioStateToken<0) return;

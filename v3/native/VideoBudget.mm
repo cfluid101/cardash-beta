@@ -4,6 +4,7 @@
 #include <atomic>
 #include "VideoBudgetProfiles.h"
 static std::atomic<uint64_t> BudgetObserved{0};
+static const CDV3VideoBudgetProfile *BudgetProfile=nullptr;
 static CFDictionaryRef (*BudgetOriginal)(uint8_t *)=nullptr;
 static int32_t (*BudgetOriginalCopyProperty)(CFTypeRef,CFStringRef,CFAllocatorRef,CFTypeRef *)=nullptr;
 static uint8_t *(*BudgetDerivedStorage)(CFTypeRef)=nullptr;
@@ -12,12 +13,18 @@ static CFStringRef BudgetUUIDKey=nullptr,BudgetBandwidthKey=nullptr;
 static CFStringRef BudgetNetworkInfoKey=nullptr;
 static uint32_t BudgetRequested();
 static bool BudgetStateReadable(const uint8_t *state);
+static const CDV3VideoStorageLayout &BudgetStorageLayout() {
+    // Preserve the original 8 Plus / 16.6 wrapper semantics and coordinates.
+    static const CDV3VideoStorageLayout legacy={0x38,0x150,0x152,0x153,false};
+    return BudgetProfile?BudgetProfile->storage:legacy;
+}
 static CFDictionaryRef BudgetClampDictionary(CFDictionaryRef original,uint8_t *state,CFAllocatorRef allocator) {
     uint32_t requested=BudgetRequested();
-    if (!original || !requested || !state || !state[0x150] || !state[0x152] ||
+    const auto &storage=BudgetStorageLayout();
+    if (!original || !requested || !state || !state[storage.carPlayOffset] || !state[storage.usbOffset] ||
         !BudgetDisplayProperty || !BudgetUUIDKey || !BudgetBandwidthKey) return original;
     // Verified StreamScreenStorage.displayDescription on this exact image.
-    CFTypeRef display=*(CFTypeRef *)(state+0x38), uuid=nullptr;
+    CFTypeRef display=*(CFTypeRef *)(state+storage.displayOffset), uuid=nullptr;
     if (!display) return original;
     int32_t error=BudgetDisplayProperty(display,BudgetUUIDKey,kCFAllocatorDefault,&uuid);
     bool own=!error && uuid && CFGetTypeID(uuid)==CFStringGetTypeID() &&
@@ -38,7 +45,11 @@ static CFDictionaryRef BudgetClampDictionary(CFDictionaryRef original,uint8_t *s
     CFRelease(number);CFRelease(original);return result;
 }
 static CFDictionaryRef BudgetNetworkInfo(uint8_t *state) {
-    return BudgetClampDictionary(BudgetOriginal(state),state,kCFAllocatorDefault);
+    CFDictionaryRef original=BudgetOriginal(state);
+    // The native helper owns its input lifetime. Validate our extra reads only
+    // after it returns; leave its result and ownership untouched on failure.
+    if (BudgetStorageLayout().guardedNetworkInfo && !BudgetStateReadable(state)) return original;
+    return BudgetClampDictionary(original,state,kCFAllocatorDefault);
 }
 static int32_t BudgetCopyProperty(CFTypeRef object,CFStringRef key,CFAllocatorRef allocator,CFTypeRef *out) {
     // Preserve native congestion/FPS calculations, status, output ownership and
@@ -72,7 +83,7 @@ static int32_t BudgetCopyProperty(CFTypeRef object,CFStringRef key,CFAllocatorRe
 // against 750 kbps). A dead backend is still detected at once by its PID.
 static const uint64_t BudgetLeaseMilliseconds=30000;
 static bool BudgetStateReadable(const uint8_t *state) {
-    return CDV3AudioMapped((uintptr_t)state,0x153,VM_PROT_READ);
+    return CDV3AudioMapped((uintptr_t)state,BudgetStorageLayout().readableSize,VM_PROT_READ);
 }
 static std::atomic<uint32_t> BudgetBits{0};
 static int BudgetReadyToken=-1,BudgetReasonToken=-1,BudgetRequestToken=-1,BudgetLeaseToken=-1,BudgetStateToken=-1,BudgetObservedToken=-1;
@@ -125,9 +136,17 @@ static void BudgetImage(const mach_header *header,intptr_t slide) {
         p+=lc->cmdsize;
     }
     if (!profile) return;BudgetAttempted=true;
-#if !defined(__arm64e__)
-    if (profile->abi==CDV3VideoBudgetABI::CopyProperty) {BudgetReport(false,@"This CopyProperty profile requires the arm64e adapter slice",10);return;}
+#if defined(__arm64e__)
+    const bool arm64eSlice=true;
+#else
+    const bool arm64eSlice=false;
 #endif
+    if (!CDV3VideoBudgetSliceMatches(*profile,arm64eSlice)) {
+        BudgetReport(false,@"Framework CPU does not match the loaded adapter slice",10);return;
+    }
+    NSLog(@"CarDashV3VideoBudget profile=%s abi=%s display=0x%x carplay=0x%x usb=0x%x",profile->name,
+          profile->abi==CDV3VideoBudgetABI::CopyProperty?"CopyProperty":"NetworkInfo",
+          profile->storage.displayOffset,profile->storage.carPlayOffset,profile->storage.usbOffset);
     if ((uintptr_t)header>UINTPTR_MAX-profile->offset) {BudgetReport(false,@"Video entry address overflow",1);return;}
     auto entry=(uint8_t *)header+profile->offset;
     auto uuidKey=(CFStringRef *)dlsym(RTLD_DEFAULT,"kAPEndpointDisplayDescriptionProperty_UUID");
@@ -149,12 +168,14 @@ static void BudgetImage(const mach_header *header,intptr_t slide) {
         if (!BudgetDerivedStorage || !BudgetNetworkInfoKey || CFGetTypeID(BudgetNetworkInfoKey)!=CFStringGetTypeID()) {
             BudgetReport(false,@"CopyProperty symbols or network key mismatch",7);return;
         }
+        BudgetProfile=profile;
         BudgetHook(entry,(void *)BudgetCopyProperty,(void **)&BudgetOriginalCopyProperty);
-        BudgetReport(BudgetOriginalCopyProperty!=nullptr,BudgetOriginalCopyProperty?@"arm64e CopyProperty":@"CopyProperty hook failed",BudgetOriginalCopyProperty?0:8);
+        BudgetReport(BudgetOriginalCopyProperty!=nullptr,BudgetOriginalCopyProperty?[NSString stringWithFormat:@"%s CopyProperty",profile->name]:@"CopyProperty hook failed",BudgetOriginalCopyProperty?0:8);
         return;
     }
+    BudgetProfile=profile;
     BudgetHook(entry,(void *)BudgetNetworkInfo,(void **)&BudgetOriginal);
-    BudgetReport(BudgetOriginal!=nullptr,BudgetOriginal?@"":@"Network-info hook failed",BudgetOriginal?0:8);
+    BudgetReport(BudgetOriginal!=nullptr,BudgetOriginal?[NSString stringWithFormat:@"%s NetworkInfo",profile->name]:@"Network-info hook failed",BudgetOriginal?0:8);
 }
 __attribute__((constructor)) static void BudgetLoad() { @autoreleasepool {
     if (![NSProcessInfo.processInfo.processName isEqual:@"mediaserverd"]) return;

@@ -7,6 +7,9 @@ static NSString *FixtureUUID;
 static NSUInteger Initializations;
 static NSUInteger Encodings;
 static NSUInteger Decodings;
+static BOOL MutualField,ExpandedSchema;
+static NSString *ExpectedInvoke;
+static unsigned OldRequests,NewRequests;
 static void Require(BOOL value,const char *message){if(!value){fprintf(stderr,"%s\n",message);exit(1);}}
 
 // Only image identity is substituted: runtime methods, type checks, host
@@ -36,6 +39,9 @@ NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
 @property(nonatomic,strong) id publicKey;
 @property(nonatomic,copy) NSString *sourceVersion;
 @property(nonatomic,getter=isWiredCarPlaySimulator) bool wiredCarPlaySimulator;
+@property(nonatomic) bool supportsMutualAuthentication;
+@property(nonatomic,copy) NSData *authenticationCertificateSerial;
+@property(nonatomic,copy) NSUUID *pairedVehicleIdentifier;
 - (id)initWithHostProperties:(NSDictionary *)properties;
 @end
 @implementation CDHost16
@@ -46,7 +52,10 @@ NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
 #pragma clang diagnostic pop
 -(id)initWithHostProperties:(NSDictionary *)p {
     Initializations++;
-    Require(p.count==8,"Unexpected dictionary key count");
+    Require(p.count==(ExpandedSchema?9:8),"Unexpected dictionary key count");
+    Require(!p[@"authenticationCertificateSerial"]&&!p[@"pairedVehicleIdentifier"],"Nil identity fields must be omitted");
+    if(ExpandedSchema)Require([p[@"supportsMutualAuth"] isEqual:@NO],"Mutual authentication not explicitly disabled");
+    else Require(!p[@"supportsMutualAuth"],"Old schema received new key");
     Require([p[@"wiredIPAddresses"] isEqual:@[@"::1"]]&&[p[@"wirelessIPAddresses"] isEqual:@[]],"Wrong address dictionary keys");
     Require([p[@"deviceID"] isEqual:@"02:43:44:4c:41:42"],"Wrong identity dictionary key");
     Require(!p[@"wiredIPv6Addresses"]&&!p[@"deviceIdentifier"]&&!p[@"carplayWiFiUUID"],"Accessor key or nil sentinel sent");
@@ -55,6 +64,11 @@ NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
         _wirelessIPv6Addresses=p[@"wirelessIPAddresses"];_port=[p[@"port"] longLongValue];
         _deviceIdentifier=p[@"deviceID"];_publicKey=p[@"publicKey"];
         _sourceVersion=p[@"sourceVersion"];_wiredCarPlaySimulator=[p[@"wiredCarPlaySimulator"] boolValue];
+        if(ExpandedSchema){_supportsMutualAuthentication=[p[@"supportsMutualAuth"] boolValue];
+            _authenticationCertificateSerial=p[@"authenticationCertificateSerial"];_pairedVehicleIdentifier=p[@"pairedVehicleIdentifier"];}
+        if([Mode isEqual:@"mutual-live"])_supportsMutualAuthentication=true;
+        if([Mode isEqual:@"serial-live"])_authenticationCertificateSerial=[NSData data];
+        if([Mode isEqual:@"vehicle-live"])_pairedVehicleIdentifier=[NSUUID UUID];
         if([Mode isEqual:@"corrupt-live"])_deviceIdentifier=@"another host";
         if([Mode isEqual:@"wrong-live-type"])_publicKey=[_publicKey dataUsingEncoding:NSUTF8StringEncoding];
     }return self;
@@ -70,6 +84,11 @@ NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
     [coder encodeObject:self.publicKey forKey:@"publicKey"];
     [coder encodeObject:self.sourceVersion forKey:@"sourceVersion"];
     [coder encodeObject:@(self.wiredCarPlaySimulator) forKey:@"wiredCarPlaySimulator"];
+    if(ExpandedSchema){
+        [coder encodeObject:@(self.supportsMutualAuthentication) forKey:@"supportsMutualAuth"];
+        if(self.authenticationCertificateSerial)[coder encodeObject:self.authenticationCertificateSerial forKey:@"authenticationCertificateSerial"];
+        if(self.pairedVehicleIdentifier)[coder encodeObject:self.pairedVehicleIdentifier forKey:@"pairedVehicleIdentifier"];
+    }
 }
 -(id)initWithCoder:(NSCoder *)coder {
     Decodings++;
@@ -83,6 +102,14 @@ NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
         _publicKey=[coder decodeObjectOfClass:NSString.class forKey:@"publicKey"];
         _sourceVersion=[coder decodeObjectOfClass:NSString.class forKey:@"sourceVersion"];
         _wiredCarPlaySimulator=[[coder decodeObjectOfClass:NSNumber.class forKey:@"wiredCarPlaySimulator"] boolValue];
+        if(ExpandedSchema){
+            _supportsMutualAuthentication=[[coder decodeObjectOfClass:NSNumber.class forKey:@"supportsMutualAuth"] boolValue];
+            if([coder containsValueForKey:@"authenticationCertificateSerial"])_authenticationCertificateSerial=[coder decodeObjectOfClass:NSData.class forKey:@"authenticationCertificateSerial"];
+            if([coder containsValueForKey:@"pairedVehicleIdentifier"])_pairedVehicleIdentifier=[coder decodeObjectOfClass:NSUUID.class forKey:@"pairedVehicleIdentifier"];
+        }
+        if([Mode isEqual:@"mutual-wire"])_supportsMutualAuthentication=true;
+        if([Mode isEqual:@"serial-wire"])_authenticationCertificateSerial=[NSData data];
+        if([Mode isEqual:@"vehicle-wire"])_pairedVehicleIdentifier=[NSUUID UUID];
         if([Mode isEqual:@"corrupt-wire"])_port++;
         if([Mode isEqual:@"wrong-wire-type"])_publicKey=[_publicKey dataUsingEncoding:NSUTF8StringEncoding];
     }return self;
@@ -100,10 +127,28 @@ NSDictionary *CDV3HostFixtureMethodIdentity(Class cls,SEL selector) {
 -(void)startSessionWithHost:(id)host completion:(void(^)(BOOL,NSError *))completion{_exit(94);}
 -(void)cancelRequests{_exit(95);}
 @end
+@interface CDClient17:NSObject @end
+@implementation CDClient17
++(void)initialize{_exit(93);}
+-(void)startSessionWithHost:(id)host requestIdentifier:(NSUUID *)identifier completion:(void(^)(BOOL,NSError *))completion{_exit(94);}
+-(void)cancelRequests{_exit(95);}
+@end
 @interface CDStatus:NSObject @end
 @implementation CDStatus
 +(void)initialize{_exit(96);}
 -(id)currentSession{_exit(97);}
+@end
+
+@interface CDDispatchClient:NSObject @end
+@implementation CDDispatchClient
+-(void)startSessionWithHost:(id)host completion:(void(^)(BOOL,NSError *))completion{
+    Require(host!=nil,"Missing old request host");OldRequests++;
+    completion(YES,[NSError errorWithDomain:@"Fixture.Native" code:42 userInfo:nil]);
+}
+-(void)startSessionWithHost:(id)host requestIdentifier:(NSUUID *)identifier completion:(void(^)(BOOL,NSError *))completion{
+    Require(host!=nil&&[identifier isKindOfClass:NSUUID.class],"New request requires actual NSUUID");NewRequests++;
+    completion(NO,[NSError errorWithDomain:@"Fixture.Native" code:43 userInfo:nil]);
+}
 @end
 
 static NSDictionary *Context(NSString *uuid,NSString *build,BOOL legacy) {
@@ -116,21 +161,51 @@ static NSDictionary *Context(NSString *uuid,NSString *build,BOOL legacy) {
 static id WrongMethod(id self,SEL selector){(void)self;(void)selector;_exit(98);}
 int main(int argc,char **argv){@autoreleasepool{
     Require(argc==2,"Missing mode");Mode=@(argv[1]);
-    BOOL ios15=[Mode hasSuffix:@"-ios15"];
-    if(ios15)Mode=[Mode substringToIndex:Mode.length-6];
-    NSString *uuid=ios15?@"8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4":@"56E68CC1-FF26-3491-9ECA-D6974006E1A4";
-    FixtureUUID=uuid;
-    NSString *build=ios15?@"19E258":@"20A357";
-    NSString *profileName=ios15?@"ios15_4_1_19E258_arm64e_carkit":@"ios16_0_20A357_arm64e_carkit";
-    Class host=objc_getClass("CDHost16"),client=objc_getClass("CDClient"),status=objc_getClass("CDStatus");
-    if([Mode hasPrefix:@"profile-"]){
+    NSArray *profiles=@[
+        @[@"-ios15",@"8B932A1D-AFE6-32C1-A93E-FDB58CC05AE4",@"19E258",@"ios15_4_1_19E258_arm64e_carkit",@"0x198134580",@NO,@NO],
+        @[@"-15early",@"536A2D38-3F4E-30A3-8383-7689A7E0511D",@"19A346",@"ios15_0_19A346_arm64e_carkit",@"0x197a1bffc",@NO,@NO],
+        @[@"-15late",@"AB1E14C0-03DF-38E0-ADD2-ED21A8984053",@"19G82",@"ios15_6_1_19G82_arm64e_carkit",@"0x1981fa0a8",@NO,@NO],
+        @[@"-16arm64",@"FDACA424-7308-31BB-9444-B096D1663D17",@"20A362",@"ios16_0_20A362_arm64_carkit",@"0x1a4b8e608",@NO,@NO],
+        @[@"-16arm64e",@"278C602E-29BE-3065-B110-5D8635E1DB8C",@"20G75",@"ios16_6_20G75_arm64e_carkit",@"0x1a8187ba4",@YES,@NO],
+        @[@"-17early",@"755A17FE-22A6-3821-8063-EE6C3E792C9C",@"21A329",@"ios17_0_21A329_arm64e_carkit",@"0x1ac3143d8",@YES,@YES],
+        @[@"-17late",@"F1329B19-1730-33F2-9B50-B4C59A0A986F",@"21G93/21G101",@"ios17_6_1_21G93_21G101_arm64e_carkit",@"0x1ad8cf7d8",@YES,@YES]];
+    NSArray *selected=@[@"",@"56E68CC1-FF26-3491-9ECA-D6974006E1A4",@"20A357",@"ios16_0_20A357_arm64e_carkit",@"0x1a6a70534",@NO,@NO];
+    for(NSArray *p in profiles)if([Mode hasSuffix:p[0]]){selected=p;Mode=[Mode substringToIndex:Mode.length-[p[0] length]];break;}
+    NSString *uuid=selected[1],*build=selected[2],*profileName=selected[3];ExpectedInvoke=selected[4];
+    MutualField=[selected[5] boolValue];ExpandedSchema=[selected[6] boolValue];FixtureUUID=uuid;
+    Class host=objc_getClass("CDHost16"),client=objc_getClass(ExpandedSchema?"CDClient17":"CDClient"),status=objc_getClass("CDStatus");
+    BOOL legacyDispatch=[Mode hasPrefix:@"dispatch-"]&&[Mode hasSuffix:@"-legacy"];
+    if(legacyDispatch){
+        Mode=[Mode substringToIndex:Mode.length-7];
+        FixtureUUID=uuid=@"E7918412-DF06-3E57-9E4E-C031AD370605";build=@"20G75";
+        host=objc_getClass("CDLegacyHost");
+    }
+    if([Mode hasPrefix:@"dispatch-"]){
+        NSDictionary *profile=CDV3FixtureHostProfile(host,client,status,Context(uuid,build,legacyDispatch));
+        if([Mode isEqual:@"dispatch-unknown"]){NSMutableDictionary *changed=[profile mutableCopy];changed[@"selected_profile"]=@"unsupported";profile=changed;}
+        if([Mode isEqual:@"dispatch-stale-image"])FixtureUUID=@"UNKNOWN";
+        if([Mode isEqual:@"dispatch-wrong-method"]){
+            Class bad=objc_allocateClassPair(objc_getClass("CDDispatchClient"),"BadDispatch",0);
+            class_addMethod(bad,NSSelectorFromString(ExpandedSchema?@"startSessionWithHost:requestIdentifier:completion:":@"startSessionWithHost:completion:"),(IMP)WrongMethod,ExpandedSchema?"v40@0:8@16@24@32":"v32@0:8@16@24");
+            objc_registerClassPair(bad);client=bad;
+        }else client=objc_getClass("CDDispatchClient");
+        __block unsigned callbacks=0;NSError *error=nil;
+        BOOL result=CDV3RequestHostSessionFixture([[client alloc] init],@"host",profile,^(BOOL success,NSError *nativeError){
+            callbacks++;Require(success==!ExpandedSchema,"BOOL callback argument changed");
+            Require([nativeError.domain isEqual:@"Fixture.Native"]&&nativeError.code==(ExpandedSchema?43:42),"NSError callback argument changed");
+        },&error);
+        BOOL valid=[Mode isEqual:@"dispatch-valid"];
+        Require(result==valid,"Wrong dispatch result");Require((error==nil)==valid,"Wrong dispatch error");
+        Require(callbacks==(valid?1u:0u),"Invalid dispatch called completion");
+        Require(OldRequests==(valid&&!ExpandedSchema?1u:0u)&&NewRequests==(valid&&ExpandedSchema?1u:0u),"Wrong selector dispatched");
+    }else if([Mode hasPrefix:@"profile-"]){
         NSDictionary *context=Context(uuid,build,NO);NSString *expected=@"unsupported";
         if([Mode isEqual:@"profile-new"]){expected=profileName;}
         else if([Mode isEqual:@"profile-legacy"]){host=objc_getClass("CDLegacyHost");context=Context(@"E7918412-DF06-3E57-9E4E-C031AD370605",@"20G75",YES);expected=@"legacy_ios16_6";}
         else if([Mode isEqual:@"profile-unknown"]){context=Context(@"UNKNOWN",@"20A357",NO);}
         else if([Mode isEqual:@"profile-different-build"]){NSMutableDictionary *changed=[Context(uuid,@"ANOTHER_BUILD",NO) mutableCopy];changed[@"os_version"]=@"ANOTHER_VERSION";context=changed;expected=profileName;}
         else if([Mode isEqual:@"profile-legacy-unverified"]){host=objc_getClass("CDLegacyHost");context=Context(@"E7918412-DF06-3E57-9E4E-C031AD370605",@"20G75",NO);}
-        else if([Mode isEqual:@"profile-wrong-start-type"]){Class bad=objc_allocateClassPair(client,"WrongClient",0);class_addMethod(bad,@selector(startSessionWithHost:completion:),(IMP)WrongMethod,"v32@0:8@16@24");objc_registerClassPair(bad);client=bad;}
+        else if([Mode isEqual:@"profile-wrong-start-type"]){Class bad=objc_allocateClassPair(client,"WrongClient",0);class_addMethod(bad,NSSelectorFromString(ExpandedSchema?@"startSessionWithHost:requestIdentifier:completion:":@"startSessionWithHost:completion:"),(IMP)WrongMethod,ExpandedSchema?"v40@0:8@16@24@32":"v32@0:8@16@24");objc_registerClassPair(bad);client=bad;}
         else if([Mode isEqual:@"profile-mixed-method-uuid"]||[Mode isEqual:@"profile-unknown-method-uuid"]||[Mode isEqual:@"profile-foreign-method-owner"]){}
         else if([Mode isEqual:@"profile-foreign-class-image"]||[Mode isEqual:@"profile-foreign-implementation-image"]){
             NSMutableDictionary *changed=[context mutableCopy],*identity=[context[@"legacy_completion"] mutableCopy];
@@ -148,10 +223,14 @@ int main(int argc,char **argv){@autoreleasepool{
             Require(![completion[@"daemon_identity_used_for_callback_abi"] boolValue]&&![completion[@"daemon_implementation_inspected"] boolValue],"Daemon evidence overstated");
             Require([completion[@"retained_block_signature"] isEqual:@"v20@?0B8@\"NSError\"12"],"Wrong block ABI");
             Require([completion[@"framework_uuid"] isEqual:uuid]&&[completion[@"reference_build"] isEqual:build],"Completion evidence belongs to another profile");
-            Require([completion[@"reply_invoke_address"] isEqual:ios15?@"0x198134580":@"0x1a6a70534"],"Wrong inspected reply implementation");
+            Require([completion[@"reply_invoke_address"] isEqual:ExpectedInvoke],"Wrong inspected reply implementation");
         }
         if([Mode isEqual:@"profile-legacy"])Require([profile[@"completion_identity"] isEqual:context[@"legacy_completion"]],"Legacy evidence changed");
         Require(Initializations==0,"Inspector constructed host");
+        if([expected isEqual:profileName]){
+            Require([profile[@"request_family"] isEqual:ExpandedSchema?@"host_request_identifier_completion":@"host_completion"],"Wrong selected request family");
+            Require([profile[@"device_validation_required"] boolValue],"Profile claims device validation");
+        }
     }else{
         NSString *key=[@"ab" stringByPaddingToLength:64 withString:@"ab" startingAtIndex:0];NSError *error=nil;
         if([Mode isEqual:@"wrong-method-type"]){Class bad=objc_allocateClassPair(host,"WrongHost",0);class_addMethod(bad,@selector(port),(IMP)WrongMethod,"@16@0:8");objc_registerClassPair(bad);host=bad;}

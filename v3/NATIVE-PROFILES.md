@@ -1,3 +1,9 @@
+# Beta 9 profile additions
+
+Beta 9 retains the three existing framework sets and adds exact identities for the five FluidDrive samples plus the shared 17.6.1 images. The early 19A346 transport is recognized but blocked before transport hooks. See [BETA-9.md](BETA-9.md) for coverage. Source tables are `native/HostProfile.mm`, `native/LoopbackProfile.h`, `native/VideoBudgetProfiles.h` and `native/AudioRouteProfile.h`; independent firmware metadata/entry fixtures are under `tests/fixtures/`. Host constructor/schema evidence is in `../docs/beta9-host-evidence.md` in the source archive. These are static/host checks, not phone success.
+
+The sections below document the retained earlier profiles.
+
 # Native implementation profiles — compatibility beta 1
 
 Selection uses observed binary identity, architecture, method ownership/types and instruction fingerprints. Installation has no model or firmware allowlist. Beta 8 adds the 19E258 implementations below alongside the existing 20G75 and 20A357 paths. Device/build strings are context, not substitute checks for implementation identity.

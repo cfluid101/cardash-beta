@@ -1,3 +1,5 @@
+> **Beta 9 (`3.0.0~beta.9`, November 16, 2026)** adds automatic component-specific profiles for the inspected iOS 15–17 firmware and actionable failure reports. **No beta 9 device acceptance yet.** Read [BETA-9.md](BETA-9.md) for exact coverage and exclusions. Native deployment minimum is 15.0; the original 8 Plus/16.6 path is retained. Older release descriptions below are historical.
+
 > **Beta 8 (`3.0.0~beta.8`, November 16, 2026) — experimental iPhone 13 Pro / iOS 15.4.1 support.** Exact profiles added alongside the existing iOS 16 profiles. See [BETA-8.md](BETA-8.md) for installation, device acceptance and limitations. This build has not run on a physical phone.
 
 > **Beta 7 (`3.0.0~beta.7`, November 16, 2026) — shrunk browser, hidden delay, steadier bitrate.** See [BETA-7.md](BETA-7.md). Host tests only; not yet run on a phone or in a car.

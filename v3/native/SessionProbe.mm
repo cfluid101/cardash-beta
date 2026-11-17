@@ -18,6 +18,17 @@
 - (BOOL)isAuthenticated;
 - (BOOL)isActivated;
 @end
+static NSString *CDSessionBounded(NSString *text,NSUInteger limit=256) {
+ return text.length>limit?[text substringToIndex:limit]:text?:@"";
+}
+static NSString *CDSessionError(NSError *error) {
+ if(!error)return @"";
+ // Do not serialize arbitrary NSError.userInfo/description: a framework may
+ // include request objects or credentials in it. Our own field mismatch
+ // messages contain field names only; other errors retain their domain/code.
+ if([error.domain isEqual:@"CarDash.V3.HostProfile"])return CDSessionBounded(error.localizedDescription);
+ return [NSString stringWithFormat:@"%@ (%ld)",CDSessionBounded(error.domain,128),(long)error.code];
+}
 // The parent writes a heartbeat every second. Three November 2026 sessions
 // ended with parent_lease_expired while the service was stalled, not gone: a
 // parent that exits is still detected at once by getppid() and the closed pipe.
@@ -39,13 +50,14 @@ int main(int argc,char **argv){@autoreleasepool{
  signal(SIGTERM,stop);signal(SIGINT,stop);signal(SIGHUP,stop);signal(SIGALRM,hardStop);signal(SIGPIPE,SIG_IGN);alarm(CDParentAlarmSeconds);pid_t parent=getppid();
  if(fcntl(STDIN_FILENO,F_SETFL,fcntl(STDIN_FILENO,F_GETFL)|O_NONBLOCK)<0)return 2;
  CDEmit(@"experimental_target",@{@"machine":CDSystem("hw.machine")?:@"",@"build":CDSystem("kern.osversion")?:@""});
- void *h=dlopen("/System/Library/PrivateFrameworks/CarKit.framework/CarKit",RTLD_NOW|RTLD_LOCAL);if(!h)return 4;
+ void *h=dlopen("/System/Library/PrivateFrameworks/CarKit.framework/CarKit",RTLD_NOW|RTLD_LOCAL);
+ if(!h){const char *loader=dlerror();CDEmit(@"compatibility_failure",@{@"stage":@"carkit_load",@"diagnostic_code":@"carkit_load_failed",@"error":CDSessionBounded(loader?@(loader):@"")});return 4;}
  Class hc=NSClassFromString(@"CARSessionRequestHost"),cc=NSClassFromString(@"CARSessionRequestClient"),sc=NSClassFromString(@"CARSessionStatus");
- NSDictionary *legacyIdentity=CDCarKitCompletionIdentity(cc);
+ NSDictionary *legacyIdentity=CDV3HostCompletionIdentity(cc);
  NSDictionary *profile=CDV3InspectHostProfile(hc,cc,sc,legacyIdentity);
  CDEmit(@"host_profile",profile);
- if(![profile[@"normal_mode_method_checks_passed"] boolValue])return 5;
- NSDictionary *identity=profile[@"completion_identity"];CDEmit(@"completion_identity",identity);if(![identity[@"typed_completion_enabled"] boolValue])return 6;
+ if(![profile[@"normal_mode_method_checks_passed"] boolValue]){CDEmit(@"compatibility_failure",@{@"stage":@"host_profile",@"diagnostic_code":profile[@"diagnostic_code"]?:@"carkit_method_contract_mismatch",@"selected_profile":profile[@"selected_profile"]?:@"unsupported"});return 5;}
+ NSDictionary *identity=profile[@"completion_identity"];CDEmit(@"completion_identity",identity);if(![identity[@"typed_completion_enabled"] boolValue]){CDEmit(@"compatibility_failure",@{@"stage":@"completion_identity",@"diagnostic_code":profile[@"diagnostic_code"]?:@"unverified_callback_contract",@"framework_uuid":identity[@"framework_uuid"]?:@""});return 6;}
  id observer=[[sc alloc] init];pump(1);if([observer currentSession]){CDEmit(@"existing_session_withheld",@{});return 7;}
  Timing timing;if(!timing.start()){CDEmit(@"timing_bind_failed",@{});return 9;}
  id client=[[cc alloc] init];
@@ -53,19 +65,22 @@ int main(int argc,char **argv){@autoreleasepool{
  NSError *error=nil;id host=nil;
  if(CDV3UsesDictionaryHostProfile(profile)){
   host=CDV3CreateDictionaryHost(hc,port,key,&error);
-  if(!host){CDEmit(@"archive_failed",@{@"error":error.description?:@"",@"stage":@"dictionary_host_preflight"});return 8;}
+  if(!host){CDEmit(@"archive_failed",@{@"error":CDSessionError(error),@"stage":@"dictionary_host_preflight",@"diagnostic_code":@"host_field_or_secure_coding_mismatch",@"error_domain":CDSessionBounded(error.domain,128),@"error_code":@(error.code)});return 8;}
   CDEmit(@"host_secure_coding",@{@"matches":@YES,@"live_fields_match":@YES,@"public_key_type":@"NSString",@"profile":profile[@"selected_profile"]});
  }else{
   host=[[hc alloc] initWithDisplayName:@"CarDash V3" wiredIPv6Addresses:@[@"::1"] wirelessIPv6Addresses:@[] port:port carplayWiFiUUID:nil deviceIdentifier:@"02:43:44:4c:41:42" publicKey:key sourceVersion:@"509.0" wiredCarPlaySimulator:YES];
-  if(!CDSecureHostRoundTrip(host,&error)){CDEmit(@"archive_failed",@{@"error":error.description?:@""});return 8;}
+  if(!CDSecureHostRoundTrip(host,&error)){CDEmit(@"archive_failed",@{@"error":CDSessionError(error)});return 8;}
  }
- CDEmit(@"request_started",@{@"port":@(port),@"duration":@(duration),@"pid":@(getpid())});
- [client startSessionWithHost:host completion:^(BOOL success,NSError *error){CDEmit(@"native_completion",@{@"success":@(success),@"error":error.description?:@""});}];
+ CDEmit(@"request_started",@{@"port":@(port),@"duration":@(duration),@"pid":@(getpid()),@"request_family":profile[@"request_family"]?:@"host_completion",@"host_schema":profile[@"host_schema"]?:@"legacy",@"mutual_authentication_advertised":@NO});
+ if(!CDV3RequestHostSession(client,host,profile,^(BOOL success,NSError *nativeError){
+    CDEmit(@"native_completion",@{@"success":@(success),@"error":CDSessionError(nativeError),@"error_domain":CDSessionBounded(nativeError.domain,128),@"error_code":@(nativeError.code),@"stage":@"native_session_request"});
+    if(!success)CDEmit(@"compatibility_failure",@{@"stage":@"native_session_request",@"diagnostic_code":@"native_request_rejected",@"error_domain":CDSessionBounded(nativeError.domain,128),@"error_code":@(nativeError.code),@"selected_profile":profile[@"selected_profile"]?:@"",@"mutual_authentication_advertised":@NO});
+ },&error)){CDEmit(@"compatibility_failure",@{@"stage":@"request_dispatch",@"diagnostic_code":@"request_contract_changed",@"error_domain":CDSessionBounded(error.domain,128),@"error_code":@(error.code),@"error":CDSessionError(error)});return 11;}
  double start=CDClock(),last=0,lease=start;while(!stopped&&getppid()==parent&&(!duration||CDClock()-start<duration)){@autoreleasepool{
  char heartbeat[64];ssize_t n=read(STDIN_FILENO,heartbeat,sizeof(heartbeat));
  if(n>0){lease=CDClock();alarm(CDParentAlarmSeconds);}else if(n==0||(n<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK)){CDEmit(@"parent_pipe_closed",@{});break;}
  if(CDClock()-lease>CDParentLeaseSeconds){CDEmit(@"parent_lease_expired",@{});break;}
  timing.step();if(CDClock()-last>1){id current=[observer currentSession];id authenticated=NSNull.null,activated=NSNull.null;if(current&&CDMethodMatches([current class],@"isAuthenticated","B",@[],NO,YES))authenticated=@([current isAuthenticated]);if(current&&CDMethodMatches([current class],@"isActivated","B",@[],NO,YES))activated=@([current isActivated]);CDEmit(@"session_observation",@{@"present":@(current!=nil),@"authenticated":authenticated,@"activated":activated,@"timing_requests":@(timing.requests),@"timing_replies":@(timing.replies)});last=CDClock();}pump(.02);}}
- }@catch(NSException *e){CDEmit(@"exception",@{@"name":e.name,@"reason":e.reason?:@""});}
+ }@catch(NSException *e){CDEmit(@"exception",@{@"name":CDSessionBounded(e.name),@"stage":@"native_session",@"diagnostic_code":@"native_session_exception"});}
  alarm(5);[client cancelRequests];pump(1);CDEmit(@"cleanup",@{@"session_present":@([observer currentSession]!=nil)});return 0;
 }}

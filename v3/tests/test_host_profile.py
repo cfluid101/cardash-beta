@@ -43,6 +43,29 @@ class HostProfileTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.run_case(mode)
 
+    def test_sweep_profiles_select_and_validate_real_archives(self):
+        for suffix in ('-15early', '-15late', '-16arm64', '-16arm64e', '-17early', '-17late'):
+            for mode in ('profile-new', 'profile-different-build', 'profile-unknown',
+                         'profile-wrong-start-type', 'profile-mixed-method-uuid',
+                         'profile-foreign-method-owner', 'valid', 'corrupt-live', 'corrupt-wire'):
+                with self.subTest(mode=mode + suffix):
+                    self.run_case(mode + suffix)
+
+    def test_authentication_fields_are_checked_before_and_after_secure_coding(self):
+        for suffix in ('-16arm64e', '-17early', '-17late'):
+            modes = ['mutual-live', 'mutual-wire']
+            if suffix.startswith('-17'):
+                modes += ['serial-live', 'serial-wire', 'vehicle-live', 'vehicle-wire']
+            for mode in modes:
+                with self.subTest(mode=mode + suffix):
+                    self.run_case(mode + suffix)
+
+    def test_actual_request_dispatch_preserves_both_callback_arguments(self):
+        for suffix in ('', '-ios15', '-15early', '-15late', '-16arm64', '-16arm64e', '-17early', '-17late', '-legacy'):
+            for mode in ('dispatch-valid', 'dispatch-unknown', 'dispatch-stale-image', 'dispatch-wrong-method'):
+                with self.subTest(mode=mode + suffix):
+                    self.run_case(mode + suffix)
+
     def test_dictionary_profiles_reject_mixed_or_foreign_method_images(self):
         for suffix in ('', '-ios15'):
             for mode in ('profile-unknown', 'profile-mixed-method-uuid',

@@ -13,7 +13,7 @@ VIDEO_READY_REASONS={
     7:'copy_property_symbols_or_key_mismatch',
     8:'hook_installation_failed',
     9:'unsupported_image_identity_or_header',
-    10:'arm64e_adapter_slice_required',
+    10:'architecture_slice_mismatch',
 }
 
 class VideoBudget:

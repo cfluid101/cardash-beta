@@ -27,11 +27,13 @@ static void *(*DerivedStorage)(CFTypeRef);
 static int32_t (*OriginalUpdate)(CFTypeRef);
 static void (*OriginalEvent)(void *);
 static bool GuardedLayout=false;
+static CDV3Loopback::LayoutFamily ActiveLayout=CDV3Loopback::LayoutFamily::Middle;
+static CDV3Loopback::Layout Layout() {return CDV3Loopback::LayoutFor(ActiveLayout);}
 // Optional diagnostic sideband; the existing loopback.ready PID/code ABI stays
 // unchanged. Values are decoded by backend/transport.py and never enable hooks.
 enum class TransportReason:uint16_t { Ready=0,Loading=1,UnsupportedIdentity=2,
     AdapterArchitecture=3,HookProvider=4,StorageAPI=5,EntryMapping=6,
-    EntryPrologue=7,UpdateHook=8,EventHook=9,LiveLayout=10 };
+    EntryPrologue=7,UpdateHook=8,EventHook=9,LiveLayout=10,UnsupportedLifecycle=11 };
 
 #ifndef CDV3_LOOPBACK_TEST
 static void Report(BOOL ready,NSString *error,TransportReason reason);
@@ -42,13 +44,20 @@ static void RejectLayout(void) {
 #endif
 }
 static bool StateMapped(const uint8_t *state) {
-    return state && CDV3AudioMapped((uintptr_t)state,0xd0,VM_PROT_READ|VM_PROT_WRITE);
+    return state && CDV3AudioMapped((uintptr_t)state,Layout().stateSize,VM_PROT_READ|VM_PROT_WRITE);
 }
 static bool OwnedLayoutUsable(const uint8_t *state) {
     if(!StateMapped(state) || state[0x40]>1 || state[0x68]>1 ||
-       *(const uint32_t *)(state+0xb8)>2 ||
+       *(const uint32_t *)(state+Layout().selectedTransport)>2 ||
        !std::isfinite(*(const double *)(state+0x38)) || *(const double *)(state+0x38)<=0 ||
-       !std::isfinite(*(const double *)(state+0x48)) || !std::isfinite(*(const double *)(state+0xb0)))return false;
+       !std::isfinite(*(const double *)(state+0x48)) || !std::isfinite(*(const double *)(state+Layout().hostTime)))return false;
+    if(Layout().requestIdentifier) {
+        void *address=*(void *const *)(state+Layout().requestIdentifier);
+        // Check the raw address before ARC can retain/message an invalid object.
+        if(address && !CDV3AudioMapped((uintptr_t)address,2*sizeof(uintptr_t),VM_PROT_READ))return false;
+        id identifier=(__bridge id)address;
+        if(identifier && ![identifier isKindOfClass:NSUUID.class])return false;
+    }
     auto map=*(CFDictionaryRef const *)(state+0x98);
     return map && CDV3AudioMapped((uintptr_t)map,2*sizeof(uintptr_t),VM_PROT_READ) &&
         CFGetTypeID(map)==CFDictionaryGetTypeID();
@@ -57,9 +66,10 @@ static bool OwnedLayoutUsable(const uint8_t *state) {
 
 static bool OwnHost(uint8_t *state) {
     if (!state || state[0xa0]!=1) return false;
-    id<CDV3LoopbackHost> host=(__bridge id<CDV3LoopbackHost>)*(void **)(state+0xa8);
+    void *address=*(void **)(state+0xa8);
+    if(GuardedLayout && address && !CDV3AudioMapped((uintptr_t)address,2*sizeof(uintptr_t),VM_PROT_READ))return false;
+    id<CDV3LoopbackHost> host=(__bridge id<CDV3LoopbackHost>)address;
     Class cls=objc_getClass("CARSessionRequestHost");
-    if(GuardedLayout && host && !CDV3AudioMapped((uintptr_t)(__bridge void *)host,2*sizeof(uintptr_t),VM_PROT_READ))return false;
     if (!host || !cls || ![host isKindOfClass:cls]) return false;
     return [[host deviceIdentifier] isEqual:@"02:43:44:4c:41:42"] &&
            [[host displayName] isEqual:@"CarDash V3"] && [host port]==62000 &&
@@ -88,7 +98,7 @@ static int32_t Update(CFTypeRef helper) {
     s[0x40]=1;s[0x68]=0;
     *(CFStringRef *)(s+0x50)=CFSTR("lo0");
     *(uint32_t *)(s+0x58)=8;
-    *(double *)(s+0x48)=*(double *)(s+0xb0);
+    *(double *)(s+0x48)=*(double *)(s+Layout().hostTime);
     *(CFDictionaryRef *)(s+0x98)=map;
     int32_t result;
     @try { result=OriginalUpdate(helper); }
@@ -100,7 +110,7 @@ static int32_t Update(CFTypeRef helper) {
         *(CFDictionaryRef *)(s+0x98)=originalMap;
         CFRelease(map);
     }
-    NSLog(@"CarDashV3Loopback update result=%d transport=%u interface=%@",result,*(uint32_t *)(s+0xb8),(__bridge id)*(CFStringRef *)(s+0xc8));
+    NSLog(@"CarDashV3Loopback update result=%d transport=%u interface=%@",result,*(uint32_t *)(s+Layout().selectedTransport),(__bridge id)*(CFStringRef *)(s+Layout().selectedInterface));
     return result;
 }
 
@@ -110,7 +120,7 @@ static void Event(void *block) {
     CFTypeRef helper=*(CFTypeRef *)(b+0x28);
     uint8_t *s=(uint8_t *)DerivedStorage(helper);
     if(GuardedLayout && !StateMapped(s)) {CDV3AudioHost(helper,false);RejectLayout();OriginalEvent(block);return;}
-    bool preserve=*(int32_t *)(b+0x40)==4 && OwnHost(s) && *(uint32_t *)(s+0xb8)==1;
+    bool preserve=*(int32_t *)(b+0x40)==4 && OwnHost(s) && *(uint32_t *)(s+Layout().selectedTransport)==1;
     if(GuardedLayout && preserve && !OwnedLayoutUsable(s)) {CDV3AudioHost(helper,false);RejectLayout();OriginalEvent(block);return;}
     CFRetain(helper); // OriginalEvent can consume its final native reference.
     if (preserve) {
@@ -119,13 +129,13 @@ static void Event(void *block) {
         // including when that captured reference was the final native owner.
         // The USB callback still records the real interface change. Suppress
         // only its "USB transport owns this host" release for our loopback host.
-        *(uint32_t *)(s+0xb8)=0;
+        *(uint32_t *)(s+Layout().selectedTransport)=0;
         NSLog(@"CarDashV3Loopback preserving local host during USB change");
     }
     @try { OriginalEvent(block); }
     @finally {
         @try {
-            if (preserve && OwnHost(s) && *(uint32_t *)(s+0xb8)==0) *(uint32_t *)(s+0xb8)=1;
+            if (preserve && OwnHost(s) && *(uint32_t *)(s+Layout().selectedTransport)==0) *(uint32_t *)(s+Layout().selectedTransport)=1;
             if (!OwnHost(s)) CDV3AudioHost(helper,false);
         }
         @finally { CFRelease(helper); }
@@ -162,16 +172,16 @@ static void Report(BOOL ready, NSString *error,TransportReason reason) {
         // Keep the registration alive for the lifetime of this process. A
         // cancelled last registration could discard the readiness state.
     }
-    NSLog(@"CarDashV3Loopback ready=%d %@",ready,error);
+    NSLog(@"CarDashV3Loopback ready=%d reasonCode=%u %@",ready,(unsigned)reason,error);
 }
-static void Image(const mach_header *header,intptr_t slide) {
+static void ImageForAdapter(const mach_header *header,intptr_t slide,bool arm64eAdapter) {
     (void)slide;
     if (attempted || !header || !CDV3AudioMapped((uintptr_t)header,sizeof(mach_header_64),VM_PROT_READ))return;
     mach_header_64 parsed={};memcpy(&parsed,header,sizeof(parsed));
     if(parsed.magic!=MH_MAGIC_64 || parsed.ncmds>4096 || parsed.sizeofcmds>1024*1024 ||
        !CDV3AudioMapped((uintptr_t)header,sizeof(parsed)+parsed.sizeofcmds,VM_PROT_READ))return;
     const uint8_t *p=(const uint8_t *)header+sizeof(parsed),*end=p+parsed.sizeofcmds;
-    uint8_t uuid[16]={};bool foundUUID=false,foundText=false;uint64_t textSize=0;
+    uint8_t uuid[16]={};bool foundUUID=false,foundText=false,transportImage=false;uint64_t textSize=0;
     for(uint32_t i=0;i<parsed.ncmds;i++) {
         if((size_t)(end-p)<sizeof(load_command))return;
         load_command command={};memcpy(&command,p,sizeof(command));
@@ -179,6 +189,16 @@ static void Image(const mach_header *header,intptr_t slide) {
         if(command.cmd==LC_UUID) {
             if(foundUUID || command.cmdsize!=sizeof(uuid_command))return;
             uuid_command identity={};memcpy(&identity,p,sizeof(identity));memcpy(uuid,identity.uuid,16);foundUUID=true;
+        } else if(command.cmd==LC_ID_DYLIB) {
+            if(command.cmdsize<sizeof(dylib_command))return;
+            dylib_command library={};memcpy(&library,p,sizeof(library));
+            const uint32_t offset=library.dylib.name.offset;
+            if(offset<sizeof(library) || offset>=command.cmdsize)return;
+            const char *name=(const char *)p+offset;
+            if(!memchr(name,0,command.cmdsize-offset))return;
+            const char *suffix="/APTransport.framework/APTransport";
+            const size_t length=strlen(name),tail=strlen(suffix);
+            transportImage=length>=tail && !strcmp(name+length-tail,suffix);
         } else if(command.cmd==LC_SEGMENT_64) {
             if(command.cmdsize<sizeof(segment_command_64))return;
             segment_command_64 segment={};memcpy(&segment,p,sizeof(segment));
@@ -193,12 +213,23 @@ static void Image(const mach_header *header,intptr_t slide) {
     }
     if(p!=end || !foundUUID || !foundText)return;
     const auto profile=CDV3Loopback::SelectProfile(uuid,(uint32_t)parsed.cputype,(uint32_t)parsed.cpusubtype);
-    if(!profile)return;
+    if(!profile) {
+        if(transportImage) {
+            attempted=true;
+            NSLog(@"CarDashV3Loopback rejected stage=identity uuid=%@ cpu=0x%x subtype=0x%x reasonCode=2",[[NSUUID alloc] initWithUUIDBytes:uuid],(uint32_t)parsed.cputype,(uint32_t)parsed.cpusubtype);
+            Report(NO,@"Unsupported APTransport firmware UUID or CPU; no hooks installed",TransportReason::UnsupportedIdentity);
+        }
+        return;
+    }
     attempted=true;
+    NSLog(@"CarDashV3Loopback profile=%s uuid=%@ cpu=0x%x subtype=0x%x layout=%s",profile->name,[[NSUUID alloc] initWithUUIDBytes:uuid],(uint32_t)parsed.cputype,(uint32_t)parsed.cpusubtype,CDV3Loopback::LayoutName(profile->layout));
+    if(!CDV3Loopback::CanHook(*profile)) {
+        Report(NO,@"Recognized early iOS 15 transport lifecycle is not implemented; native USB removal releases the host before a nested update; no hooks installed",TransportReason::UnsupportedLifecycle);return;
+    }
     uint8_t *base=(uint8_t *)header;
-#if !defined(__arm64e__)
-    if(profile->guardedLayout) {Report(NO,@"This exact firmware profile requires the arm64e adapter slice",TransportReason::AdapterArchitecture);return;}
-#endif
+    if(!CDV3Loopback::AdapterMatches(*profile,arm64eAdapter)) {
+        Report(NO,@"Loaded transport adapter slice does not match the exact framework architecture",TransportReason::AdapterArchitecture);return;
+    }
     DerivedStorage=(void *(*)(CFTypeRef))dlsym(RTLD_DEFAULT,"CMBaseObjectGetDerivedStorage");
     auto executable=[](uintptr_t address,size_t size){return CDV3AudioMapped(address,size,VM_PROT_READ|VM_PROT_EXECUTE);};
     if(!HookFunction) {Report(NO,@"Transport hook provider is unavailable",TransportReason::HookProvider);return;}
@@ -209,11 +240,22 @@ static void Image(const mach_header *header,intptr_t slide) {
                mappingRejected?TransportReason::EntryMapping:TransportReason::EntryPrologue);return;
     }
     GuardedLayout=profile->guardedLayout;
+    ActiveLayout=profile->layout;
     NSLog(@"CarDashV3Loopback matched profile=%s update=0x%zx event=0x%zx guardedLayout=%d",profile->name,profile->updateOffset,profile->eventOffset,GuardedLayout);
     HookFunction(base+profile->updateOffset,(void *)Update,(void **)&OriginalUpdate);
     if (!OriginalUpdate) { Report(NO,@"Transport update hook failed",TransportReason::UpdateHook);return; }
     HookFunction(base+profile->eventOffset,(void *)Event,(void **)&OriginalEvent);
     Report(OriginalEvent!=nullptr,OriginalEvent?@"":@"Transport disconnect hook failed",OriginalEvent?TransportReason::Ready:TransportReason::EventHook);
+}
+
+static void Image(const mach_header *header,intptr_t slide) {
+    // Adapter architecture is a compiler fact, never inferred from the image
+    // being considered. The shared gate is exercised in both directions by tests.
+#if defined(__arm64e__)
+    ImageForAdapter(header,slide,true);
+#else
+    ImageForAdapter(header,slide,false);
+#endif
 }
 
 __attribute__((constructor)) static void Load(void) { @autoreleasepool {

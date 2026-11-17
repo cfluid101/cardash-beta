@@ -1,3 +1,7 @@
+# Current beta 9 status
+
+[BETA-9.md](BETA-9.md) supersedes the historical coverage statements below. Known component implementations are selected independently from exact identities and runtime guards. iOS15.0 deployment allows diagnostics; its inspected early transport remains blocked. New 15.6.1,16.0 arm64,16.6 arm64e,17.0 and17.6.1 framework profiles are experimental; no beta9 device result is claimed. Standard rootless packaging only. The availability of a compatible jailbreak and system-process injection is separate.
+
 # Broad-compatibility work
 
 The intended experience is one appropriate package per jailbreak layout with automatic architecture and runtime selection, without users choosing firmware-specific builds. Successful installation alone does not establish that native CarPlay can start.

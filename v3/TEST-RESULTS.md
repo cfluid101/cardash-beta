@@ -1,3 +1,41 @@
+# Beta 9 validation — November 16, 2026
+
+The final implementation passed **279 Python/native-fixture/package tests**,
+**110 packaged-viewer JavaScript tests**, **21 reference receiver JavaScript
+ tests**, and **one receiver session-lock test**. The hosted Viewer 5 candidate
+passed the same 110 viewer tests with only its expected label adjusted, plus
+**seven routing/asset/CSP integrity tests**. Earlier Viewer 4 assets remain
+byte-identical; local package viewer behavior is unchanged.
+
+All nine shipped native images build with warnings treated as errors and pass
+ad-hoc code-signature verification. The package audit checks both arm64 and
+arm64e adapter slices, iOS15.0 deployment commands across every image, rootless
+payload paths/ownership, installer behavior, manifest hashes and absence of
+private accessory payloads. The external iOS15 OpenSSL link input remains
+pinned by SHA256 and is not bundled.
+
+Native fixtures cover exact/unknown/mixed identities, wrong architecture in
+both directions, instruction/VM failures, early15.0 rejection before transport
+hooks, middle/shifted transport ownership and cancellation, old/new video ABI
+and storage offsets, audio setter decoding and lease cleanup, legacy and iOS17
+request dispatch, BOOL/NSError callback propagation and secure host archives.
+Diagnostic tests cover missing injection/helper, stale publishers, optional
+audio, failed startup gates, bounded exports and preserving a native error when
+the helper exits without another diagnostic event. Independent review found
+and resolved that error-display regression and a transport architecture gap.
+
+The retained twelve new video/audio framework binaries independently match
+profile UUID/CPU/entry bytes and inspected segment permissions. Original
+8 Plus/16.6 profile metadata remains identical to beta8 in the three media
+selectors. The beta8 DEB remains unchanged for rollback.
+
+**No beta9 physical-device test, pointer-authenticated hook execution,
+CarPlay authentication, actual video/audio/touch, or vehicle trial was performed.**
+The new candidates are firmware-derived and host-tested only. Exact coverage,
+iOS15.0's transport block and jailbreak/layout limits are in [BETA-9.md](BETA-9.md).
+Release checksums and the attached validation record identify the final package
+and source commit. Historical results below belong to earlier builds.
+
 # Beta 8 — iOS 15.4.1 compatibility verification
 
 Package: `3.0.0~beta.8` (November 16, 2026), based on the released beta 7 source at `6853363594803a3c4c62ae69e226ea82bbf86cd2`. Adds exact 19E258/iPhone 13 Pro firmware profiles and retains the original 20G75/iPhone 8 Plus and 20A357/iPhone 14 Pro Max implementations. **No physical phone was contacted or installed on. This build is experimental and has no device acceptance result.**

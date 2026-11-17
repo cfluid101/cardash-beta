@@ -10,6 +10,101 @@ PREFIX = 'com.cfluid.cardash.v3.inventory.v1'
 FRAMEWORKS = ('aptransport', 'mediaexperience', 'airplaysender')
 
 
+def diagnostic_fields(value, names):
+    """Keep bounded facts only; never copy arbitrary status or credential objects."""
+    if not isinstance(value, dict): return {}
+    result = {}
+    for name in names:
+        item = value.get(name)
+        if isinstance(item, str): result[name] = item[:1024]
+        elif type(item) in (bool, int) and abs(item) <= 2**64: result[name] = item
+    return result
+
+
+def compatibility_summary(inventory, inspection, status):
+    """Describe independent observed checks. This record never authorizes a hook."""
+    inventory = inventory if isinstance(inventory, dict) else {}
+    inspection = inspection if isinstance(inspection, dict) else {}
+    status = status if isinstance(status, dict) else {}
+    components, issues = {}, []
+    export = 'Export diagnostic report after this attempt, including any matching crash report.'
+    def issue(component, code, detail, optional=False):
+        issues.append({'component': component, 'code': code,
+                       'severity': 'optional' if optional else 'blocking',
+                       'detail': str(detail or code)[:1024], 'next_step': export})
+    identities = inventory.get('frameworks', {})
+    if not isinstance(identities, dict): identities = {}
+    inventory_ok = inventory.get('complete') is True and type(inventory.get('pid')) is int and inventory['pid'] > 1
+    media_codes = {
+        'transport': {2: 'identity_unsupported', 3: 'architecture_slice_mismatch',
+                      4: 'hook_provider_unavailable', 5: 'required_symbol_missing',
+                      6: 'entry_mapping_mismatch', 7: 'instruction_mismatch',
+                      8: 'update_hook_failed', 9: 'disconnect_hook_failed',
+                      10: 'live_layout_mismatch', 11: 'lifecycle_unsupported'},
+        'video': {1: 'entry_address_overflow', 2: 'hook_provider_unavailable',
+                  3: 'required_symbol_missing', 4: 'entry_mapping_mismatch',
+                  5: 'instruction_mismatch', 6: 'property_key_mismatch',
+                  7: 'copy_property_contract_mismatch', 8: 'hook_failed',
+                  9: 'identity_unsupported', 10: 'architecture_slice_mismatch'},
+        'audio': {2: 'initialization_incomplete', 3: 'identity_unsupported',
+                  4: 'text_segment_mismatch', 5: 'data_segment_mismatch',
+                  6: 'hook_provider_unavailable', 7: 'setter_mapping_mismatch',
+                  8: 'flag_mapping_mismatch', 9: 'instruction_mismatch',
+                  10: 'flag_value_invalid', 11: 'hook_failed'},
+    }
+    unverified = False
+    for name, status_key, image in (('transport', 'transport', 'aptransport'),
+                                     ('video', 'videoBudget', 'airplaysender'),
+                                     ('audio', 'audioRouting', 'mediaexperience')):
+        state = diagnostic_fields(status.get(status_key),
+            ('ready', 'pid', 'code', 'reasonCode', 'reason', 'error', 'advice'))
+        identity = diagnostic_fields(identities.get(image),
+            ('state', 'stateCode', 'parseError', 'uuid', 'cpuType', 'cpuSubtype'))
+        verified = inventory_ok and state.get('pid') == inventory['pid'] and identity.get('state') == 'observed'
+        state['reported_ready'] = state.get('ready') is True
+        state['ready'] = state['reported_ready'] and verified
+        state['identity'] = identity
+        state['publisher_verified'] = verified
+        components[name] = state
+        optional = name == 'audio' and status.get('audioOutput') == 'browser'
+        if not state['reported_ready']:
+            code = media_codes.get(name, {}).get(state.get('reasonCode'), 'unavailable')
+            if state.get('pid', 0) <= 1: code = 'not_loaded'
+            issue(name, name + '_' + code, state.get('error') or state.get('reason'), optional)
+        elif not verified and not optional:
+            unverified = True
+    if not inventory_ok or unverified:
+        issue('injection', 'media_inventory_unverified',
+              inventory.get('error') or 'Readiness and framework inventory do not identify the same live media process.')
+    raw_inspection = inspection.get('inspection', {})
+    if not isinstance(raw_inspection, dict): raw_inspection = {}
+    profile = diagnostic_fields(raw_inspection.get('host_profile'),
+        ('selected_profile', 'profile_matched', 'request_family', 'host_schema',
+         'diagnostic_code', 'evidence_level', 'device_validation_required', 'error', 'reason'))
+    profile['ready'] = inspection.get('complete') is True and profile.get('profile_matched') is True
+    profile['framework'] = diagnostic_fields(raw_inspection.get('framework'),
+        ('path', 'loaded', 'image_uuid', 'load_error'))
+    components['session'] = profile
+    if inspection.get('complete') is not True:
+        profile['error'] = str(inspection.get('error') or 'Inspection incomplete')[:1024]
+        issue('session', 'session_inspection_unavailable', profile['error'])
+    elif not profile['ready']:
+        issue('session', profile.get('diagnostic_code') or 'session_contract_unsupported',
+              profile.get('error') or profile.get('reason'))
+    if status.get('error'):
+        issue('runtime', 'native_session_or_media_error', status['error'])
+    native = diagnostic_fields(status.get('native'), ('present', 'authenticated', 'activated'))
+    frames = status.get('nativeFrames', 0)
+    observed = (status.get('active') is True and type(frames) is int and frames > 0 and
+                native.get('present') is True and native.get('authenticated') is True)
+    blocked = any(item['severity'] == 'blocking' for item in issues)
+    return {'event': 'compatibility_summary', 'schema_version': 1, 'diagnostic_only': True,
+            'version': str(status.get('version', ''))[:128], 'components': components,
+            'issues': issues, 'verdict': 'blocked' if blocked else 'ready_for_device_trial',
+            'session_observed': observed, 'native_observation': native,
+            'evidence_limit': 'Framework checks and observed session state do not certify all features or other firmware.'}
+
+
 def media_process_alive(pid):
     os.kill(pid, 0)
     library = ctypes.CDLL('/usr/lib/libproc.dylib')

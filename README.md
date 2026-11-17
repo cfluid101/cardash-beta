@@ -1,3 +1,5 @@
+> Current V3 candidate: **[Beta 9](v3/BETA-9.md)** — exact iOS15–17 component profiles and clean compatibility reports; physical-device acceptance pending.
+
 # CarDash V3 Native Beta
 
 For **CarDash V3 beta 4**, see [setup and compatibility](v3/README.md), [release validation](v3/TEST-RESULTS.md) and [beta downloads](https://github.com/cfluid101/cardash-beta/releases/tag/v3.0.0-beta.4). V3 runs native CarPlay video, touch and audio output on the phone, with no fixed session-duration limit. The supported target is iPhone 8 Plus, iOS 16.6 build 20G75, rootless. Full-app interfaces tested with CarBridge require that separate tweak; microphone input is not supported. Tesla vehicle testing remains necessary.

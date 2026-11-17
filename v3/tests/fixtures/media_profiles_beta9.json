@@ -1,0 +1,155 @@
+{
+  "provenance": "Independent original-cache/extracted-byte comparisons retained on FluidDrive compatibility-sweep-2026-11-16, analysis/media and analysis/ios17-comparison; earlier 17.6.1 evidence in cardash-ios17-investigation-2026-11-16. Static observations, no device execution. Apple binaries are not redistributed.",
+  "samples": [
+    {
+      "sample": "iPhone10,2_16.0_20A362",
+      "video": {
+        "uuid": "6C2C7899-2287-30FE-B997-53935C0D74B3",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x0",
+        "offset": "0x11b1f4",
+        "entry16": "ff8304d1e9230c6dfc6f0da9f85f0ea9",
+        "abi": "CopyProperty",
+        "display": "0x38",
+        "carplay": "0x150",
+        "usb": "0x152",
+        "sha256": "c3282bc96040f31aa09ee2c3669c9b895296918d22553257575ca0acbe482a5f"
+      },
+      "audio": {
+        "uuid": "087A0583-D352-3D4C-97C1-3DDEFD00693F",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x0",
+        "text": "0x1953ee000",
+        "setter": "0x19548cab0",
+        "flag": "0x1ddc05d30",
+        "entry16": "c83b24b008612c9100610839c0035fd6",
+        "sha256": "106d1b9add3abce755c45abb786d26b54ea5af0faeb3639a036a07574d47e83a"
+      }
+    },
+    {
+      "sample": "iPhone14,2_15.0_19A346",
+      "video": {
+        "uuid": "61F98515-DDD3-3E32-A9D3-983D58E8570D",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "offset": "0x11d6e8",
+        "entry16": "7f2303d5ff8304d1e9230c6dfc6f0da9",
+        "abi": "CopyProperty",
+        "display": "0x38",
+        "carplay": "0x150",
+        "usb": "0x152",
+        "sha256": "f1df3193e75fa422b6c3e0deabc3c12513b231477ee31203e8b98a51f8c86919"
+      },
+      "audio": {
+        "uuid": "9CD6C2D9-6E86-332B-8D8B-A7C4D84E53BA",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "text": "0x19a68f000",
+        "setter": "0x19a73899c",
+        "flag": "0x1d7341e00",
+        "entry16": "48601eb008a12e9100610939c0035fd6",
+        "sha256": "f165256da98a9289fd5adb2f823fd5501b7cfecd6a88e1509c4c97ac9a378ef0"
+      }
+    },
+    {
+      "sample": "iPhone14,2_15.6.1_19G82",
+      "video": {
+        "uuid": "7BFEF281-5931-38BA-9CA8-0B0CA1408C32",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "offset": "0x126084",
+        "entry16": "7f2303d5ff8304d1e9230c6dfc6f0da9",
+        "abi": "CopyProperty",
+        "display": "0x38",
+        "carplay": "0x150",
+        "usb": "0x152",
+        "sha256": "27abae5169ab02d810afca11a28ad54cc4e53632189827699a5fea7ff4f2661b"
+      },
+      "audio": {
+        "uuid": "6CD495E1-9535-32FC-84C7-0265DB94DEB3",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "text": "0x19af1e000",
+        "setter": "0x19afcb20c",
+        "flag": "0x1d75f80d0",
+        "entry16": "68311e9008e1399100610939c0035fd6",
+        "sha256": "3ec62d8cfc527c638b14fbdf0058f70c312f882233ff076f26a9c7315459cc89"
+      }
+    },
+    {
+      "sample": "iPhone14,2_16.6_20G75",
+      "video": {
+        "uuid": "C19B2EC6-0AAD-314A-BC96-0A90BCB4F3FB",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "offset": "0x144674",
+        "entry16": "7f2303d5ff8302d1e923066df65707a9",
+        "abi": "NetworkInfo",
+        "display": "0x38",
+        "carplay": "0x150",
+        "usb": "0x152",
+        "sha256": "6394a46a4553fe48d670c30d5db5c1f2824bf05d4eaa29e9302690d35337880d"
+      },
+      "audio": {
+        "uuid": "B5A6BA03-EA09-300B-A2E4-B8010372BBDD",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "text": "0x196acd000",
+        "setter": "0x196b798d0",
+        "flag": "0x1daae99f0",
+        "entry16": "88fb219008611f9100610839c0035fd6",
+        "sha256": "ce112b72052b44a9e1c76584108aa6f9c71aac302089145b7c37240b97a15174"
+      }
+    },
+    {
+      "sample": "iPhone14,2_17.0_21A329",
+      "video": {
+        "uuid": "5121DBA5-6F85-3D48-8144-878D91FCDA0B",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "offset": "0x157fc4",
+        "entry16": "7f2303d5ff8302d1e923066df65707a9",
+        "abi": "NetworkInfo",
+        "display": "0x40",
+        "carplay": "0x158",
+        "usb": "0x15a",
+        "sha256": "0c585d4df0bf40c0feaeabf9bb56168f23e66852385150dc45c193448009b21a"
+      },
+      "audio": {
+        "uuid": "E6F31864-AC72-3138-A981-9F6BCF6D37DD",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "text": "0x199312000",
+        "setter": "0x1993c9fa0",
+        "flag": "0x1d864fc48",
+        "entry16": "28941fd008612b9100c10539c0035fd6",
+        "sha256": "069f5cf51604f6198da9bd35badecd6fc91a6f44cfd32a3d432f0962f6873660"
+      }
+    },
+    {
+      "sample": "iPhone14,5_17.6.1_21G93-and-21G101",
+      "video": {
+        "uuid": "637B3E90-0F7C-30C1-BC6A-BF86E0030332",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "offset": "0x15be78",
+        "entry16": "7f2303d5ff8302d1e923066df65707a9",
+        "abi": "NetworkInfo",
+        "display": "0x40",
+        "carplay": "0x158",
+        "usb": "0x15a",
+        "sha256": "75ec61ea729d0cae50b3af9894de2a66b82fb94ca2d44f087b136d83b0b2f09b"
+      },
+      "audio": {
+        "uuid": "C7AD02B7-3B84-395B-9774-E5D3D425C093",
+        "cpu_type": "0x100000c",
+        "cpu_subtype": "0x80000002",
+        "text": "0x199d4d000",
+        "setter": "0x199e3db10",
+        "flag": "0x1e7bfa030",
+        "entry16": "e8ed269008013b9100c10539c0035fd6",
+        "sha256": "9a5d48dbbd8bfe80b60f522213de1abe63d0aa49a3c9eb157ef7bfa7de0f9bee"
+      }
+    }
+  ]
+}

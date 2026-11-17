@@ -100,10 +100,10 @@ NSDictionary *CDV3InspectCarKitAtPath(NSString *frameworkPath) {
             CDInspectionMethod(@"CARSessionStatus",@"currentSession","@",@[])
         ];
         report[@"methods"]=methods;
+        report[@"alternate_request_method"]=CDInspectionMethod(@"CARSessionRequestClient",@"startSessionWithHost:requestIdentifier:completion:","v",@[@"@",@"@",@"@?"]);
         // @? describes a block argument, not the block's own callable ABI.
         // Profiles retain their separate, explicit static evidence bases.
-        Class completionClass=[methods[1][@"available"] boolValue]?NSClassFromString(@"CARSessionRequestClient"):Nil;
-        NSDictionary *legacy=CDCarKitCompletionIdentity(completionClass);
+        NSDictionary *legacy=CDV3HostCompletionIdentity(NSClassFromString(@"CARSessionRequestClient"));
         NSDictionary *profile=CDV3InspectHostProfile(NSClassFromString(@"CARSessionRequestHost"),
             NSClassFromString(@"CARSessionRequestClient"),NSClassFromString(@"CARSessionStatus"),legacy);
         report[@"host_profile"]=profile;

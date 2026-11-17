@@ -66,10 +66,23 @@ class TransportTest(unittest.TestCase):
         # The stable diagnostic text testers already quote is still present.
         self.assertTrue(unsupported['error'].startswith('USB-free transport is unavailable: adapter unavailable: unsupported APTransport firmware UUID or CPU'))
         self.assertIn('ElleKit',failed(4)['error']);self.assertNotIn('not supported by this beta yet',failed(4)['error'])
-        self.assertIn('arm64e adapter slice',failed(3)['advice'])
-        for reason in (5,6,7,8,9,10):
+        self.assertIn('matching arm64 or arm64e adapter slice',failed(3)['advice'])
+        for reason in (5,6,7):
             with self.subTest(reason=reason):
                 self.assertIn('a safety check failed, so nothing was patched',failed(reason)['error'])
+        for reason in (8,9):
+            with self.subTest(reason=reason):
+                self.assertIn('hook attempt failed',failed(reason)['advice'])
+                self.assertIn('Session startup is blocked',failed(reason)['advice'])
+                self.assertNotIn('nothing was patched',failed(reason)['advice'])
+        self.assertIn('after the update hook was installed',failed(9)['advice'])
+        self.assertIn('forwarded this native callback',failed(10)['advice'])
+        self.assertNotIn('nothing was patched',failed(10)['advice'])
+        lifecycle=failed(11)
+        self.assertEqual(lifecycle['reasonCode'],11)
+        self.assertIn('lifecycle is not implemented; no hooks installed',lifecycle['error'])
+        self.assertIn('USB-disconnect ownership path',lifecycle['advice'])
+        self.assertIn('reinstalling does not add',lifecycle['advice'])
         missing=transport_status(probe=lambda:0)
         self.assertIn('has not loaded the CarDash adapter',missing['error']);self.assertIn('userspace reboot',missing['advice'])
         ready=transport_status(probe=lambda:(123<<8)|1,alive=lambda pid:None)

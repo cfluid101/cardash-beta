@@ -2,6 +2,7 @@
 #import "../native/Loopback.mm"
 #include <cassert>
 #include <cstdio>
+#include <sys/mman.h>
 
 @interface CARSessionRequestHost : NSObject <CDV3LoopbackHost>
 @property(nonatomic,strong) NSString *displayName;
@@ -20,6 +21,9 @@ extern "C" void CDV3AudioHost(const void *helper,bool own) {audioCalls++;if(own|
 
 static bool scoped, throwUpdate, cancelHost, consumeHelper, helperDestroyed;
 static unsigned updates, events;
+// Independent runtime fixture coordinates, not derived from the production descriptor.
+static size_t expectedHostTime=0xb0,expectedTransport=0xb8,expectedInterface=0xc8;
+static bool shifted=false;
 @interface HarnessHelper : NSObject
 @property(nonatomic,strong) NSMutableData *storage;
 @end
@@ -31,7 +35,7 @@ static unsigned updates, events;
 - (void)dealloc {
     // The last native reference is released inside FakeEvent. Destruction must
     // wait until Event restores the selected transport after that callback.
-    assert(*(uint32_t *)((uint8_t *)self.storage.mutableBytes+0xb8)==1);
+    assert(*(uint32_t *)((uint8_t *)self.storage.mutableBytes+expectedTransport)==1);
     helperDestroyed=true;
 }
 @end
@@ -47,7 +51,7 @@ static int32_t FakeUpdate(CFTypeRef helper) {
         assert(CFDictionaryContainsKey(map,CFSTR("en2")));
         assert(CFEqual(CFDictionaryGetValue(map,CFSTR("lo0")),(__bridge CFArrayRef)@[@"::1"]));
         if (throwUpdate) @throw [NSException exceptionWithName:@"test" reason:nil userInfo:nil];
-        *(uint32_t *)(s+0xb8)=1;
+        *(uint32_t *)(s+expectedTransport)=1;
     } else {
         assert(s[0x40]==0 && s[0x68]==1);
         assert(CFEqual(*(CFStringRef *)(s+0x50),CFSTR("en2")));
@@ -57,7 +61,7 @@ static int32_t FakeUpdate(CFTypeRef helper) {
 static void FakeEvent(void *block) {
     ++events; auto b=(uint8_t *)block; auto helper=*(CFTypeRef *)(b+0x28);
     auto s=(uint8_t *)Storage(helper);
-    if (*(int32_t *)(b+0x40)==4 && *(uint32_t *)(s+0xb8)==1) *(void **)(s+0xa8)=nullptr;
+    if (*(int32_t *)(b+0x40)==4 && *(uint32_t *)(s+expectedTransport)==1) *(void **)(s+0xa8)=nullptr;
     if (cancelHost) *(void **)(s+0xa8)=nullptr;
     if (scoped && !cancelHost) Update(helper);
     if (consumeHelper) {
@@ -66,8 +70,25 @@ static void FakeEvent(void *block) {
         assert(!helperDestroyed);
     }
 }
-int main(int argc,char **) { @autoreleasepool {
+int main(int argc,char **argv) { @autoreleasepool {
+    // A shifted layout must prove all 0xd8 bytes mapped. A legacy-sized span
+    // ending at a VM boundary must not let the +d0 pointer through.
+    const auto page=(size_t)getpagesize();
+    auto pages=(uint8_t *)mmap(nullptr,page*2,PROT_READ|PROT_WRITE,MAP_ANON|MAP_PRIVATE,-1,0);
+    assert(pages!=MAP_FAILED && !mprotect(pages+page,page,PROT_NONE));
+    ActiveLayout=CDV3Loopback::LayoutFamily::Middle;
+    assert(StateMapped(pages+page-0xd0));
+    ActiveLayout=CDV3Loopback::LayoutFamily::RequestIdentifier;
+    assert(!StateMapped(pages+page-0xd0));
+    assert(StateMapped(pages+page-0xd8));
+    assert(!munmap(pages,page*2));
+    ActiveLayout=CDV3Loopback::LayoutFamily::Middle;
     GuardedLayout=argc==2;
+    shifted=argc==2 && !strcmp(argv[1],"shifted");
+    if(shifted) {
+        ActiveLayout=CDV3Loopback::LayoutFamily::RequestIdentifier;
+        expectedHostTime=0xb8;expectedTransport=0xc0;expectedInterface=0xd0;
+    }
     DerivedStorage=Storage; OriginalUpdate=FakeUpdate; OriginalEvent=FakeEvent;
     CFTypeRef helper=CFBridgingRetain([HarnessHelper new]);
     auto state=(uint8_t *)Storage(helper);
@@ -76,11 +97,17 @@ int main(int argc,char **) { @autoreleasepool {
     host.deviceIdentifier=@"02:43:44:4c:41:42"; host.port=62000;
     host.isWiredCarPlaySimulator=YES;host.wiredIPv6Addresses=@[@"::1"];
     state[0xa0]=1;state[0x68]=1;
+    NSUUID *requestID=[NSUUID UUID];
+    if(shifted) {
+        *(void **)(state+0xb0)=(__bridge void *)requestID;
+        *(double *)(state+0xc8)=4321.25;
+    }
+    *(CFStringRef *)(state+expectedInterface)=CFSTR("lo0");
     *(void **)(state+0xa8)=(__bridge void *)host;
     *(CFStringRef *)(state+0x50)=CFSTR("en2");
     *(uint32_t *)(state+0x58)=16;*(double *)(state+0x48)=42;
     *(double *)(state+0x38)=40;
-    *(double *)(state+0xb0)=1234;
+    *(double *)(state+expectedHostTime)=1234;
     NSDictionary *map=@{@"en2":@[@"fe80::1"]};
     *(CFDictionaryRef *)(state+0x98)=(__bridge CFDictionaryRef)map;
     auto restored=[&]{assert(state[0x40]==0 && state[0x68]==1);
@@ -90,6 +117,9 @@ int main(int argc,char **) { @autoreleasepool {
     if(GuardedLayout) {
         // A matched image alone must not permit writes to incompatible live
         // state. FakeUpdate observes the untouched physical inputs on fallback.
+        *(void **)(state+0xa8)=(void *)(uintptr_t)0x10000;
+        assert(!OwnHost(state)); // No ARC retain may happen before mapping guard.
+        *(void **)(state+0xa8)=(__bridge void *)host;
         scoped=false;*(double *)(state+0x38)=0;
         assert(Update(helper)==-123);restored();
         *(double *)(state+0x38)=40;
@@ -98,10 +128,22 @@ int main(int argc,char **) { @autoreleasepool {
         assert(state[0x40]==0 && state[0x68]==1 && *(uint32_t *)(state+0x58)==16);
         *(CFDictionaryRef *)(state+0x98)=(__bridge CFDictionaryRef)map;
         *(CFTypeRef *)(block+0x28)=helper;*(int32_t *)(block+0x40)=4;
-        *(uint32_t *)(state+0xb8)=1;*(double *)(state+0x38)=0;
+        *(uint32_t *)(state+expectedTransport)=1;*(double *)(state+0x38)=0;
         CDV3AudioHost(helper,true);Event(block);assert(!*(void **)(state+0xa8) && !audioOwn);
         *(void **)(state+0xa8)=(__bridge void *)host;*(double *)(state+0x38)=40;
         assert(updates==2 && events==1);updates=0;events=0;
+        if(shifted) {
+            assert(Layout().hostTime==0xb8 && Layout().selectedTransport==0xc0 &&
+                   Layout().selectedInterface==0xd0 && Layout().stateSize==0xd8);
+            // A readable non-UUID pointer in the request slot must refuse the
+            // shifted layout before changing any native inputs.
+            *(void **)(state+0xb0)=(__bridge void *)@[];
+            assert(!OwnedLayoutUsable(state));
+            *(void **)(state+0xb0)=(void *)(uintptr_t)0x10000;
+            assert(!OwnedLayoutUsable(state));
+            *(void **)(state+0xb0)=(__bridge void *)requestID;
+            assert(OwnedLayoutUsable(state));
+        }
         puts("Guarded layout refusal preserves native forwarding");
     }
     scoped=true; assert(Update(helper)==-123); restored();
@@ -114,26 +156,32 @@ int main(int argc,char **) { @autoreleasepool {
     *(void **)((uint8_t *)foreign.storage.mutableBytes+0xa8)=(__bridge void *)foreignHost;
     const auto audioBefore=audioCalls;Update((__bridge CFTypeRef)foreign);
     assert(audioOwn && audioCalls==audioBefore+1); // unrelated helper cannot cancel our device-audio lease
-    *(uint32_t *)((uint8_t *)foreign.storage.mutableBytes+0xb8)=1;
+    *(uint32_t *)((uint8_t *)foreign.storage.mutableBytes+expectedTransport)=1;
     host.displayName=@"Another Car";Update(helper);restored();assert(!audioOwn);
     host.displayName=@"CarDash V3";host.port=62001;Update(helper);restored();
     host.port=62000;host.wiredIPv6Addresses=@[@"::2"];Update(helper);restored();
     host.wiredIPv6Addresses=@[@"::1"];state[0xa0]=0;Update(helper);restored();state[0xa0]=1;
     *(CFTypeRef *)(block+0x28)=helper;*(int32_t *)(block+0x40)=4;
-    scoped=true;*(uint32_t *)(state+0xb8)=1;Event(block);
-    assert(*(void **)(state+0xa8)==(__bridge void *)host && *(uint32_t *)(state+0xb8)==1);restored();
+    scoped=true;*(uint32_t *)(state+expectedTransport)=1;Event(block);
+    assert(*(void **)(state+0xa8)==(__bridge void *)host && *(uint32_t *)(state+expectedTransport)==1);restored();
+    if(shifted) {
+        assert(*(void **)(state+0xb0)==(__bridge void *)requestID);
+        assert(*(double *)(state+0xc8)==4321.25);
+        assert(*(CFStringRef *)(state+0xd0)==CFSTR("lo0"));
+        puts("Shifted transport preserves request identity and adjacent double");
+    }
     scoped=false;host.displayName=@"Another Car";Event(block);assert(!*(void **)(state+0xa8));
     host.displayName=@"CarDash V3";*(void **)(state+0xa8)=(__bridge void *)host;
-    scoped=true;cancelHost=true;*(uint32_t *)(state+0xb8)=1;Event(block);
-    assert(!*(void **)(state+0xa8) && *(uint32_t *)(state+0xb8)==0);assert(!audioOwn);
-    cancelHost=false;scoped=false;*(int32_t *)(block+0x40)=5;*(uint32_t *)(state+0xb8)=2;
-    Event(block);assert(*(uint32_t *)(state+0xb8)==2);
+    scoped=true;cancelHost=true;*(uint32_t *)(state+expectedTransport)=1;Event(block);
+    assert(!*(void **)(state+0xa8) && *(uint32_t *)(state+expectedTransport)==0);assert(!audioOwn);
+    cancelHost=false;scoped=false;*(int32_t *)(block+0x40)=5;*(uint32_t *)(state+expectedTransport)=2;
+    Event(block);assert(*(uint32_t *)(state+expectedTransport)==2);
     assert(updates==8 && events==4);
     puts("10 native lifecycle cases passed");
     // The callback owns the final native helper reference, as in the observed
     // APTransport block. No further original update sets the transport back.
     *(void **)(state+0xa8)=(__bridge void *)host;
-    *(int32_t *)(block+0x40)=4;*(uint32_t *)(state+0xb8)=1;
+    *(int32_t *)(block+0x40)=4;*(uint32_t *)(state+expectedTransport)=1;
     consumeHelper=true;Event(block);
     assert(helperDestroyed && updates==8 && events==5);
     puts("Final-reference callback lifetime case passed");

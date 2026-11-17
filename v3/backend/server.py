@@ -35,12 +35,12 @@ from network import TeslaNetwork,allowed_peer
 from transport import transport_status,startup_failure,AudioLease,audio_route_status
 from video_budget import VideoBudget, VideoBudgetLease, budget_status
 from browser_access import BrowserAccess,BrowserAccessError
-from compatibility import inventory_status, inspect_session_helper
+from compatibility import inventory_status, inspect_session_helper, compatibility_summary, diagnostic_fields
 
 startup_phase('imports_ready')
 
 ROOT=Path(__file__).resolve().parent
-VERSION='3.0.0-beta.8'
+VERSION='3.0.0-beta.9'
 DISPLAY='b7e6c5a0-1111-4000-8000-000000000001'
 IMAGE_WAIT_SECONDS=4
 # A browser that has shown CarPlay may be silent this long before its native
@@ -295,12 +295,21 @@ class Receiver:
         async with self.lock:return await self._start_locked(viewport)
     async def _start_locked(self,viewport=None):
         if self.active:return self.status()
+        def check(condition, stage, error, detail=None):
+            if not condition:
+                self.error=error
+                self.log('compatibility_failure',stage=stage,error=error,
+                         **diagnostic_fields(detail,('pid','code','reasonCode','reason')))
+                raise ValueError(error)
         need(not self.provisioning,'Wait for identity preparation to finish')
         need(self.ready(),'Open CarDash V3 on the phone and tap Prepare Native Preview first')
-        transport=transport_status(self.state);need(transport['ready'],transport.get('error','Transport unavailable'))
+        transport=transport_status(self.state);check(transport['ready'],'transport',transport.get('error','Transport unavailable'),transport)
         if self.audio_output=='phone':
-            routing=audio_route_status();need(routing['ready'],routing.get('error','Audio routing unavailable'))
-        budget=budget_status();need(budget['ready'] and budget.get('pid')==transport.get('pid'),'Video bandwidth adapter unavailable; reinstall this beta to reload the media service')
+            routing=audio_route_status();check(routing['ready'],'audio',routing.get('error','Audio routing unavailable'),routing)
+        budget=budget_status()
+        budget_reason='publisher_mismatch' if budget['ready'] and budget.get('pid')!=transport.get('pid') else budget.get('reason','readiness_unavailable')
+        check(budget['ready'] and budget.get('pid')==transport.get('pid'),'video',
+            'Video bandwidth adapter unavailable ('+str(budget_reason)+'); export diagnostic report',budget)
         self.display=geometry(viewport);self.actual_source=None;self.display_verified=False;self.image_error='';self.image_sequence=0
         self.der=(self.state/'accessory/identity.pk8').read_bytes();self.cert=(self.state/'accessory/certificate.p7b').read_bytes()
         need(hashlib.sha256(self.cert).hexdigest()==CERT_SHA256 and crypto.certificate_matches(self.der,self.cert),'Accessory identity invalid')
@@ -339,12 +348,20 @@ class Receiver:
                         elif value.get('event')=='cleanup' and value.get('session_present') is False:self.native={'present':False,'authenticated':False,'activated':False}
                         elif value.get('event')=='timing_sync':self.clock_offset=float(value['offset_seconds'])
                     if self.generation==generation and value.get('event')=='native_completion' and value.get('success') is False:
-                        self.native_error=value.get('error') or 'CarKit returned success=false without an error description'
+                        self.native_error=str(value.get('error') or 'CarKit returned success=false without an error description')[:1024]
+                        self.error=self.native_error+'; export diagnostic report'
+                    if self.generation==generation and value.get('event') in ('compatibility_failure','archive_failed','exception','timing_bind_failed','existing_session_withheld'):
+                        detail=diagnostic_fields(value,('stage','diagnostic_code','error','error_domain','error_code','name'))
+                        stage=detail.get('stage',value['event'])
+                        message=detail.get('diagnostic_code') or detail.get('error') or detail.get('name') or value['event']
+                        suffix=(' ('+str(detail.get('error_domain',''))+' '+str(detail['error_code'])+')') if 'error_code' in detail else ''
+                        self.native_error=(str(stage)+': '+str(message)+suffix)[:1024]
+                        self.error=self.native_error+'; export diagnostic report'
                     self.log('native_helper',detail=value)
                 except (ValueError,KeyError):self.log('native_helper_output',text=line.decode(errors='replace')[:2000])
             code=await child.wait()
             if self.helper is child:
-                if code:self.error=f'Native helper exited ({code}); export diagnostics'
+                if code and not self.native_error:self.error=f'Native helper exited ({code}); export diagnostics'
                 await self.stop('native_helper_ended',generation=generation)
         except asyncio.CancelledError:pass
     async def stop(self,reason='user_stop',generation=None):
@@ -842,10 +859,12 @@ class Receiver:
             else:
                 async with self.inspection_lock:
                     records.append(await inspect_session_helper(self.args.helper))
+            status=self.status()
+            records.append(compatibility_summary(records[0],records[1],status))
             if text and not text.endswith('\n'):text+='\n'
             text+=''.join(json.dumps(record)+'\n' for record in records)
             if len(text)>4*1024*1024:text=text[-4*1024*1024:].partition('\n')[2]
-            return {'report':text,'status':self.status()}
+            return {'report':text,'status':status}
         raise ValueError('Unknown action')
     async def ipc(self,reader,writer):
         try:

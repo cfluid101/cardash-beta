@@ -1,3 +1,5 @@
+Current package: **Beta 9**, `3.0.0~beta.9`, with minimum iOS 15.0 for all bundled native slices and the companion. Read [BETA-9.md](BETA-9.md) for the exact experimental framework sets; 19A346 is diagnostics-only. Use the same verified iOS15 libssl3 build input below. Older beta 8 deployment/coverage descriptions are historical.
+
 # Build
 
 Current package: **Beta 8**, `3.0.0~beta.8`; see [BETA-8.md](BETA-8.md). All native components and the companion now target iOS 15.4.1. Exact 19E258 profiles are added alongside the existing 20A357 and 20G75 paths. No physical-device acceptance has been performed for beta 8. Native lease lifetimes are now 30 seconds (media adapters) and 60 seconds (session helper), refreshed every second; text below that says eight seconds describes earlier packages.

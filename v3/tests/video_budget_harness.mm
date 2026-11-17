@@ -41,6 +41,12 @@ int main() {@autoreleasepool {
  auto oldProfile=CDV3VideoBudgetFindProfile(oldUUID,0x0100000c,0),newProfile=CDV3VideoBudgetFindProfile(newUUID,0x0100000c,0x80000002);
  assert(oldProfile && oldProfile->abi==CDV3VideoBudgetABI::NetworkInfo && oldProfile->offset==0x1215dc);
  assert(newProfile && newProfile->abi==CDV3VideoBudgetABI::CopyProperty && newProfile->offset==0x13f8c4);
+ assert(oldProfile->storage.displayOffset==0x38 && oldProfile->storage.carPlayOffset==0x150 &&
+        oldProfile->storage.usbOffset==0x152 && !oldProfile->storage.guardedNetworkInfo);
+ // Selecting the historical profile retains the original wrapper behavior.
+ BudgetProfile=oldProfile;state[0x150]=1;readableState=nullptr;
+ result=BudgetNetworkInfo(state);assert(Read(result)==3000000);CFRelease(result);
+
  assert(!CDV3VideoBudgetFindProfile(newUUID,0x0100000c,0));
  assert(!CDV3VideoBudgetFindProfile(oldUUID,0x0100000c,0x80000002));
  assert(!CDV3VideoBudgetFindProfile(newUUID,0x01000007,0x80000002));
@@ -89,5 +95,111 @@ int main() {@autoreleasepool {
  copyValue=input;derivedState=nullptr;BudgetCopyProperty(object,network,nullptr,&out);assert(out==input);CFRelease(out);
  derivedState=(uint8_t *)1;BudgetCopyProperty(object,network,nullptr,&out);assert(out==input);CFRelease(out);
  CFRelease(network);
+
+ // Each image selects its own inspected storage fields. Older fields deliberately
+ // describe an unrelated display for iOS 17, so reusing offsets cannot pass.
+
+ {
+ uint8_t uuid[]={0x6c,0x2c,0x78,0x99,0x22,0x87,0x30,0xfe,0xb9,0x97,0x53,0x93,0x5c,0x0d,0x74,0xb3};
+ BudgetProfile=CDV3VideoBudgetFindProfile(uuid,0x100000c,0x0);assert(BudgetProfile);
+ assert(BudgetProfile->storage.displayOffset==0x38 && BudgetProfile->storage.carPlayOffset==0x150 && BudgetProfile->storage.usbOffset==0x152);
+ assert(BudgetProfile->storage.readableSize==0x152+1 && BudgetProfile->storage.guardedNetworkInfo);
+ assert(CDV3VideoBudgetSliceMatches(*BudgetProfile,false));
+ assert(!CDV3VideoBudgetSliceMatches(*BudgetProfile,true));
+ memset(state,0,sizeof(state));
+ *(CFTypeRef *)(state+0x38)=CFSTR("unrelated-display");state[0x150]=state[0x152]=1;
+ *(CFTypeRef *)(state+0x38)=CFSTR("b7e6c5a0-1111-4000-8000-000000000001");state[0x150]=state[0x152]=1;
+ readableState=state;derivedState=state;request=3000000;copyValue=input;
+
+ BudgetCopyProperty(object,BudgetNetworkInfoKey,kCFAllocatorDefault,&out);assert(Read((CFDictionaryRef)out)==3000000);CFRelease(out);
+ readableState=nullptr;BudgetCopyProperty(object,BudgetNetworkInfoKey,kCFAllocatorDefault,&out);assert(out==input);CFRelease(out);
+ }
+
+ {
+ uint8_t uuid[]={0x61,0xf9,0x85,0x15,0xdd,0xd3,0x3e,0x32,0xa9,0xd3,0x98,0x3d,0x58,0xe8,0x57,0x0d};
+ BudgetProfile=CDV3VideoBudgetFindProfile(uuid,0x100000c,0x80000002);assert(BudgetProfile);
+ assert(BudgetProfile->storage.displayOffset==0x38 && BudgetProfile->storage.carPlayOffset==0x150 && BudgetProfile->storage.usbOffset==0x152);
+ assert(BudgetProfile->storage.readableSize==0x152+1 && BudgetProfile->storage.guardedNetworkInfo);
+ assert(CDV3VideoBudgetSliceMatches(*BudgetProfile,true));
+ assert(!CDV3VideoBudgetSliceMatches(*BudgetProfile,false));
+ memset(state,0,sizeof(state));
+ *(CFTypeRef *)(state+0x38)=CFSTR("unrelated-display");state[0x150]=state[0x152]=1;
+ *(CFTypeRef *)(state+0x38)=CFSTR("b7e6c5a0-1111-4000-8000-000000000001");state[0x150]=state[0x152]=1;
+ readableState=state;derivedState=state;request=3000000;copyValue=input;
+
+ BudgetCopyProperty(object,BudgetNetworkInfoKey,kCFAllocatorDefault,&out);assert(Read((CFDictionaryRef)out)==3000000);CFRelease(out);
+ readableState=nullptr;BudgetCopyProperty(object,BudgetNetworkInfoKey,kCFAllocatorDefault,&out);assert(out==input);CFRelease(out);
+ }
+
+ {
+ uint8_t uuid[]={0x7b,0xfe,0xf2,0x81,0x59,0x31,0x38,0xba,0x9c,0xa8,0x0b,0x0c,0xa1,0x40,0x8c,0x32};
+ BudgetProfile=CDV3VideoBudgetFindProfile(uuid,0x100000c,0x80000002);assert(BudgetProfile);
+ assert(BudgetProfile->storage.displayOffset==0x38 && BudgetProfile->storage.carPlayOffset==0x150 && BudgetProfile->storage.usbOffset==0x152);
+ assert(BudgetProfile->storage.readableSize==0x152+1 && BudgetProfile->storage.guardedNetworkInfo);
+ assert(CDV3VideoBudgetSliceMatches(*BudgetProfile,true));
+ assert(!CDV3VideoBudgetSliceMatches(*BudgetProfile,false));
+ memset(state,0,sizeof(state));
+ *(CFTypeRef *)(state+0x38)=CFSTR("unrelated-display");state[0x150]=state[0x152]=1;
+ *(CFTypeRef *)(state+0x38)=CFSTR("b7e6c5a0-1111-4000-8000-000000000001");state[0x150]=state[0x152]=1;
+ readableState=state;derivedState=state;request=3000000;copyValue=input;
+
+ BudgetCopyProperty(object,BudgetNetworkInfoKey,kCFAllocatorDefault,&out);assert(Read((CFDictionaryRef)out)==3000000);CFRelease(out);
+ readableState=nullptr;BudgetCopyProperty(object,BudgetNetworkInfoKey,kCFAllocatorDefault,&out);assert(out==input);CFRelease(out);
+ }
+
+ {
+ uint8_t uuid[]={0xc1,0x9b,0x2e,0xc6,0x0a,0xad,0x31,0x4a,0xbc,0x96,0x0a,0x90,0xbc,0xb4,0xf3,0xfb};
+ BudgetProfile=CDV3VideoBudgetFindProfile(uuid,0x100000c,0x80000002);assert(BudgetProfile);
+ assert(BudgetProfile->storage.displayOffset==0x38 && BudgetProfile->storage.carPlayOffset==0x150 && BudgetProfile->storage.usbOffset==0x152);
+ assert(BudgetProfile->storage.readableSize==0x152+1 && BudgetProfile->storage.guardedNetworkInfo);
+ assert(CDV3VideoBudgetSliceMatches(*BudgetProfile,true));
+ assert(!CDV3VideoBudgetSliceMatches(*BudgetProfile,false));
+ memset(state,0,sizeof(state));
+ *(CFTypeRef *)(state+0x38)=CFSTR("unrelated-display");state[0x150]=state[0x152]=1;
+ *(CFTypeRef *)(state+0x38)=CFSTR("b7e6c5a0-1111-4000-8000-000000000001");state[0x150]=state[0x152]=1;
+ readableState=state;derivedState=state;request=3000000;copyValue=input;
+
+ auto n=BudgetNetworkInfo(state);assert(Read(n)==3000000);CFRelease(n);
+ readableState=nullptr;n=BudgetNetworkInfo(state);assert(Read(n)==25000000);CFRelease(n);
+ // Native helper is still called exactly once; wrapper must not read invalid storage.
+ unsigned before=calls;n=BudgetNetworkInfo((uint8_t *)1);assert(calls==before+1 && Read(n)==25000000);CFRelease(n);
+ }
+
+ {
+ uint8_t uuid[]={0x51,0x21,0xdb,0xa5,0x6f,0x85,0x3d,0x48,0x81,0x44,0x87,0x8d,0x91,0xfc,0xda,0x0b};
+ BudgetProfile=CDV3VideoBudgetFindProfile(uuid,0x100000c,0x80000002);assert(BudgetProfile);
+ assert(BudgetProfile->storage.displayOffset==0x40 && BudgetProfile->storage.carPlayOffset==0x158 && BudgetProfile->storage.usbOffset==0x15a);
+ assert(BudgetProfile->storage.readableSize==0x15a+1 && BudgetProfile->storage.guardedNetworkInfo);
+ assert(CDV3VideoBudgetSliceMatches(*BudgetProfile,true));
+ assert(!CDV3VideoBudgetSliceMatches(*BudgetProfile,false));
+ memset(state,0,sizeof(state));
+ *(CFTypeRef *)(state+0x38)=CFSTR("unrelated-display");state[0x150]=state[0x152]=1;
+ *(CFTypeRef *)(state+0x40)=CFSTR("b7e6c5a0-1111-4000-8000-000000000001");state[0x158]=state[0x15a]=1;
+ readableState=state;derivedState=state;request=3000000;copyValue=input;
+
+ auto n=BudgetNetworkInfo(state);assert(Read(n)==3000000);CFRelease(n);
+ readableState=nullptr;n=BudgetNetworkInfo(state);assert(Read(n)==25000000);CFRelease(n);
+ // Native helper is still called exactly once; wrapper must not read invalid storage.
+ unsigned before=calls;n=BudgetNetworkInfo((uint8_t *)1);assert(calls==before+1 && Read(n)==25000000);CFRelease(n);
+ }
+
+ {
+ uint8_t uuid[]={0x63,0x7b,0x3e,0x90,0x0f,0x7c,0x30,0xc1,0xbc,0x6a,0xbf,0x86,0xe0,0x03,0x03,0x32};
+ BudgetProfile=CDV3VideoBudgetFindProfile(uuid,0x100000c,0x80000002);assert(BudgetProfile);
+ assert(BudgetProfile->storage.displayOffset==0x40 && BudgetProfile->storage.carPlayOffset==0x158 && BudgetProfile->storage.usbOffset==0x15a);
+ assert(BudgetProfile->storage.readableSize==0x15a+1 && BudgetProfile->storage.guardedNetworkInfo);
+ assert(CDV3VideoBudgetSliceMatches(*BudgetProfile,true));
+ assert(!CDV3VideoBudgetSliceMatches(*BudgetProfile,false));
+ memset(state,0,sizeof(state));
+ *(CFTypeRef *)(state+0x38)=CFSTR("unrelated-display");state[0x150]=state[0x152]=1;
+ *(CFTypeRef *)(state+0x40)=CFSTR("b7e6c5a0-1111-4000-8000-000000000001");state[0x158]=state[0x15a]=1;
+ readableState=state;derivedState=state;request=3000000;copyValue=input;
+
+ auto n=BudgetNetworkInfo(state);assert(Read(n)==3000000);CFRelease(n);
+ readableState=nullptr;n=BudgetNetworkInfo(state);assert(Read(n)==25000000);CFRelease(n);
+ // Native helper is still called exactly once; wrapper must not read invalid storage.
+ unsigned before=calls;n=BudgetNetworkInfo((uint8_t *)1);assert(calls==before+1 && Read(n)==25000000);CFRelease(n);
+ }
+ BudgetProfile=nullptr;
  puts("Video budget helper and typed CopyProperty ownership, ABI and fallback passed");
 }}
